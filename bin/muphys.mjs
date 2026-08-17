@@ -99,13 +99,17 @@ switch (command) {
   case "dedupe": {
     // Exact content duplicates only (punctuation-folded title+description
     // equality). Anything less identical is a curator judgment call.
-    // Dedupe equality gets its OWN fold, and it must be lossless across
-    // scripts: the scorer's ASCII fold discards non-Latin text, so two
-    // distinct Japanese lessons sharing a couple of ASCII tokens would fold
-    // to the same key and --apply would retire a genuinely distinct lesson.
-    // Unicode property classes keep every letter/number in every script;
-    // only case, whitespace and punctuation are normalized away.
-    const fold = (t) => String(t || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    // Dedupe equality gets its OWN fold, and because --apply is destructive
+    // the fold must preserve every distinction that makes two lessons
+    // different text. Three input classes have bitten here, each caught by
+    // adversarial review: (1) an ASCII-only fold conflated distinct
+    // non-English lessons; (2) \p{L}\p{N} alone strips combining marks
+    // (category \p{M}), colliding Devanagari क with कि and breaking every
+    // abugida and mark-bearing script; (3) without NFC, precomposed and
+    // decomposed forms of the SAME text fold differently. So: NFC-normalize,
+    // then keep letters, numbers AND marks — only case, whitespace and
+    // punctuation are folded away.
+    const fold = (t) => String(t || "").normalize("NFC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim();
     const rows = core.readRegister();
     const groups = new Map();
     for (const lesson of rows) {

@@ -140,3 +140,26 @@ test("sync: concurrent runs against a STALE lock never write duplicate ids", asy
   assert.equal(new Set(ids).size, ids.length, `duplicate ids written under contention: ${ids.join(",")}`);
   assert.equal(ids.length, 2, "both lessons land exactly once");
 });
+
+test("dedupe fold preserves combining marks: Devanagari क and कि never collide", () => {
+  const pair = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: "क के बारे में सबक", description: "पहला सबक क अक्षर के बारे में है।" },
+    { title: "कि के बारे में सबक", description: "पहला सबक कि अक्षर के बारे में है।" },
+  ] }), { author: "test" });
+  const plan = JSON.parse(cli(["dedupe"]));
+  const planned = JSON.stringify(plan.wouldRetire || []);
+  for (const record of pair) assert.ok(!planned.includes(record.id), "mark-distinguished Devanagari lessons must never be dedupe candidates");
+});
+
+test("dedupe fold NFC-normalizes: precomposed and decomposed forms of the same text ARE grouped", () => {
+  const precomposed = "café lesson";               // é as U+00E9
+  const decomposed = "café lesson";               // e + combining acute
+  assert.notEqual(precomposed, decomposed, "sanity: different code points");
+  const dupes = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: precomposed, description: `${precomposed} description body.` },
+    { title: decomposed, description: `${decomposed} description body.` },
+  ] }), { author: "test" });
+  const plan = JSON.parse(cli(["dedupe"]));
+  const planned = JSON.stringify(plan.wouldRetire || []);
+  assert.ok(dupes.some((record) => planned.includes(record.id)), "same text in different normalization forms must be dedupe candidates");
+});
