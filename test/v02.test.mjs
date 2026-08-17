@@ -115,14 +115,14 @@ test("doctor flags an active lesson that keeps failing; healthy lessons stay qui
 // Embedding retriever — against a local fake OpenAI-compatible endpoint.
 // ---------------------------------------------------------------------------
 
-function startFakeEmbeddings() {
+function startFakeEmbeddings(vectorForOverride) {
   // Paraphrase pair maps to near-identical vectors; everything else is far.
-  const vectorFor = (text) => {
+  const vectorFor = vectorForOverride || ((text) => {
     const t = String(text).toLowerCase();
     if (t.includes("live in production") || t.includes("actually shipped")) return [0.99, 0.05, 0.0];
     if (t.includes("unrelated")) return [0.0, 0.05, 0.99];
     return [0.1, 0.95, 0.1];
-  };
+  });
   const state = { requests: 0, embedded: 0 };
   const server = http.createServer((req, res) => {
     let body = "";
@@ -198,4 +198,123 @@ test("embedding backend failure is fail-open: lexical results, no error", () => 
   const result = JSON.parse(execFileSync("node", [CLI, "query", "deployment verify checklist"], { env, encoding: "utf8" }));
   assert.equal(result.retriever, "lexical", "a dead backend must degrade to lexical, never to an error");
   assert.ok(result.count >= 1, "lexical results still flow");
+});
+
+// ---------------------------------------------------------------------------
+// v0.2 review round: trust-the-input fixes at the new boundaries.
+// ---------------------------------------------------------------------------
+
+function runNode(script, env) {
+  return new Promise((resolve, reject) => {
+    execFile("node", ["-e", script], { env, encoding: "utf8" }, (error, stdout) => {
+      if (error && !stdout) reject(error);
+      else resolve(stdout);
+    });
+  });
+}
+
+test("apply dedupes repeated lesson ids: one event counts once, doctor stays quiet", async () => {
+  const home = freshHome("muphys-r1apply-");
+  seedRegister(home, [{ id: "llg-dupapply001", title: "Dup apply lesson", description: "Applied once with a stuttered id.", status: "active" }]);
+  const env = { ...process.env, MUPHYS_HOME: home, HOME: home };
+  await runNode(`
+    const core = require(${JSON.stringify(path.join(HERE, "..", "lib", "register.cjs"))});
+    core.callTool("lessons_apply", { lessonIds: ["llg-dupapply001", "llg-dupapply001"], task: "t", outcome: "failed" }).then(() => process.exit(0));
+  `, env);
+  const stats = JSON.parse(execFileSync("node", [CLI, "stats", "--by-lesson"], { env, encoding: "utf8" }));
+  const row = stats.byLesson.find((l) => l.id === "llg-dupapply001");
+  assert.equal(row.applies, 1, "a stuttered id in one apply event counts once");
+  assert.equal(row.failed, 1);
+  const doctorOut = JSON.parse(execFileSync("node", [CLI, "doctor"], { env, encoding: "utf8" }));
+  assert.equal(doctorOut.ok, true, "a single real failed event must not trip the supersession flag");
+});
+
+test("garbage vectors fail the hybrid pass open and are never cached", async () => {
+  // Didact's probe: a wrong-length vector mixed in with real ones. The old
+  // Math.min truncation scored it cosine 1.0; batch dimension-consistency
+  // now fails the whole pass open. (A backend returning uniformly
+  // degenerate-but-consistent vectors is indistinguishable in shape from a
+  // bad model — correctness guards shape, model quality is the operator's
+  // choice.)
+  const { server, port } = await startFakeEmbeddings((text) => (String(text).includes("shipped") ? [999] : [0.1, 0.95, 0.1]));
+  try {
+    const home = freshHome("muphys-r1vec-");
+    seedRegister(home, [
+      { id: "llg-veclesson01", title: "Confirm the fix is live in production", description: "verified live in production", status: "active" },
+      { id: "llg-veclesson02", title: "Deployment checklist hygiene", description: "deployment verify checklist", status: "active" },
+    ]);
+    const env = { ...process.env, MUPHYS_HOME: home, MUPHYS_EMBEDDINGS_URL: `http://127.0.0.1:${port}/v1/embeddings`, MUPHYS_EMBEDDINGS_MODEL: "bad-model" };
+    const result = JSON.parse(await runCli(["query", PARAPHRASE], env));
+    assert.equal(result.retriever, "lexical", "a 1-dim garbage vector must not score as similarity 1.0 — the pass fails open");
+    assert.ok(!fs.existsSync(path.join(home, "embeddings-cache.jsonl")), "invalid vectors must never enter the cache");
+  } finally {
+    server.close();
+  }
+});
+
+test("NaN and empty vectors also fail open", async () => {
+  for (const bad of [[NaN, 0, 0], []]) {
+    const { server, port } = await startFakeEmbeddings(() => bad);
+    try {
+      const home = freshHome("muphys-r1nan-");
+      seedRegister(home, [{ id: "llg-nanlesson01", title: "Confirm the fix is live in production", description: "verified live in production", status: "active" }]);
+      const env = { ...process.env, MUPHYS_HOME: home, MUPHYS_EMBEDDINGS_URL: `http://127.0.0.1:${port}/v1/embeddings`, MUPHYS_EMBEDDINGS_MODEL: "bad-model" };
+      const result = JSON.parse(await runCli(["query", PARAPHRASE], env));
+      assert.equal(result.retriever, "lexical");
+    } finally {
+      server.close();
+    }
+  }
+});
+
+test("a poisoned cache row is treated as missing and re-fetched, not served", async () => {
+  const { server, state, port } = await startFakeEmbeddings();
+  try {
+    const home = freshHome("muphys-r1heal-");
+    seedRegister(home, [{ id: "llg-heallesson1", title: "Confirm the fix is live in production", description: "verified live in production", status: "active", tags: ["ops"] }]);
+    // Poison the cache for the QUERY text under this model before any run.
+    const crypto = await import("node:crypto");
+    const key = crypto.createHash("sha256").update(JSON.stringify(["heal-model", PARAPHRASE])).digest("hex");
+    fs.writeFileSync(path.join(home, "embeddings-cache.jsonl"), JSON.stringify({ k: key, v: [null, "x"] }) + "\n");
+    const env = { ...process.env, MUPHYS_HOME: home, MUPHYS_EMBEDDINGS_URL: `http://127.0.0.1:${port}/v1/embeddings`, MUPHYS_EMBEDDINGS_MODEL: "heal-model" };
+    const result = JSON.parse(await runCli(["query", PARAPHRASE], env));
+    assert.equal(result.retriever, "hybrid", "the poisoned row heals via re-fetch instead of failing the pass");
+    assert.ok(state.embedded >= 2, "query and lesson were re-embedded despite the cache file existing");
+  } finally {
+    server.close();
+  }
+});
+
+test("credentials in the endpoint URL never reach the query log", async () => {
+  const home = freshHome("muphys-r1cred-");
+  seedRegister(home, [{ id: "llg-credlesson1", title: "Confirm the fix is live in production", description: "verified live in production", status: "active" }]);
+  const env = {
+    ...process.env,
+    MUPHYS_HOME: home,
+    MUPHYS_EMBEDDINGS_URL: "http://markeruser:markerpass2026@127.0.0.1:1/v1/embeddings",
+    MUPHYS_EMBEDDINGS_MODEL: "cred-model",
+    MUPHYS_EMBEDDINGS_TIMEOUT_MS: "600",
+  };
+  const result = JSON.parse(await runCli(["query", PARAPHRASE], env));
+  assert.equal(result.retriever, "lexical");
+  const log = fs.readFileSync(path.join(home, "queries.jsonl"), "utf8");
+  assert.ok(!log.includes("markerpass2026"), "URL userinfo must be stripped from persisted error text");
+  const row = JSON.parse(log.trim().split("\n").pop());
+  assert.ok(row.embeddingsError, "the failure itself is still recorded (sanitized)");
+});
+
+test("malformed JSON lines get a spec-compliant -32700, valid requests still answered", async () => {
+  const home = freshHome("muphys-r1parse-");
+  const proc = spawn("node", [CLI, "mcp"], { env: { ...process.env, MUPHYS_HOME: home } });
+  const out = [];
+  proc.stdout.on("data", (d) => out.push(d));
+  proc.stdin.write("this is not json\n");
+  proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list" }) + "\n");
+  proc.stdin.end();
+  await new Promise((resolve) => proc.on("exit", resolve));
+  const lines = Buffer.concat(out).toString("utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const parseError = lines.find((l) => l.error && l.error.code === -32700);
+  assert.ok(parseError, "malformed input answers with -32700");
+  assert.equal(parseError.id, null);
+  assert.ok(lines.find((l) => l.id === 7 && l.result), "valid requests after garbage still answered");
 });

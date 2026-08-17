@@ -69,7 +69,9 @@ function outcomeRollup() {
       const outcome = typeof row.outcome === "string" && ["worked", "partial", "failed", "unknown"].includes(row.outcome) ? row.outcome : "unspecified";
       totals.applies += 1;
       totals[outcome] += 1;
-      for (const id of row.lessonIds) {
+      // Read-side dedupe mirrors the write-side one: legacy or hand-written
+      // usage rows with repeated ids still count once per event.
+      for (const id of new Set(row.lessonIds)) {
         if (typeof id !== "string") continue;
         if (!perLesson.has(id)) perLesson.set(id, { id, applies: 0, worked: 0, partial: 0, failed: 0, unknown: 0, unspecified: 0 });
         const bucket = perLesson.get(id);
