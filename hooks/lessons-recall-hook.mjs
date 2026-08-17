@@ -1,0 +1,192 @@
+#!/usr/bin/env node
+// muphys-law — push-injection recall hook for Claude Code (UserPromptSubmit).
+//
+// Pull-based recall ("remember to call lessons_query before tasks") measurably
+// fails: in the originating deployment the primary agent called it once in
+// 433 sessions despite a standing instruction. This hook converts recall from
+// agent discipline into infrastructure: it scores each incoming prompt against
+// the register with the same scorer lessons_query uses and injects the top
+// matches as context.
+//
+// Install (user scope, ~/.claude/settings.json):
+//   "hooks": { "UserPromptSubmit": [ { "hooks": [ {
+//     "type": "command",
+//     "command": "node /path/to/muphys-law/hooks/lessons-recall-hook.mjs",
+//     "timeout": 10 } ] } ] }
+//
+// HARD-WON MOUNTING NOTE: if your agent harness spawns Claude Code with
+// `--setting-sources user` (some do, and some force-rewrite overrides),
+// project-scope .claude/settings.json is NEVER loaded — install at user scope
+// and let this script self-gate. Verify by EFFECT (a record appears in the
+// injection log from a real session), never by reading the settings file back.
+//
+// SAFETY: fail-open — any error or low-relevance result exits 0 with no
+// output. Fail-open components are silent when broken, so pair this with an
+// external liveness check (see bin/muphys.mjs doctor).
+//
+// EXPERIMENT MODE (optional): if MUPHYS_HOME/experiment.json exists and is
+// enabled, sessions are randomized treat/control by a deterministic hash of
+// session id; control sessions compute and LOG the counterfactual injection
+// without emitting it, so both arms produce matched records. This is how the
+// published behavioral trial was run. Without that file the hook always
+// injects.
+
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import crypto from "node:crypto";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const core = require(path.join(path.dirname(new URL(import.meta.url).pathname), "..", "lib", "register.cjs"));
+
+const MUPHYS_HOME = core.MUPHYS_HOME;
+const STATE_DIR = path.join(MUPHYS_HOME, "hook-state");
+const INJECTION_LOG = path.resolve(process.env.MUPHYS_INJECTION_LOG || path.join(MUPHYS_HOME, "injections.jsonl"));
+const EXPERIMENT_PATH = path.join(MUPHYS_HOME, "experiment.json");
+
+// Gate policy (hook-side; the scorer itself is shared with lessons_query).
+const MIN_SCORE = Number(process.env.MUPHYS_HOOK_MIN_SCORE || 12);
+const MIN_TERMS = Number(process.env.MUPHYS_HOOK_MIN_TERMS || 3);
+const MAX_LESSONS = 3;
+const MAX_BLOCK_CHARS = 1400;
+const MAX_INJECTIONS_PER_SESSION = 5;
+const MIN_PROMPT_CHARS = 40; // "ok", "continue" never trigger recall
+
+// Optional scoping: only fire for sessions whose cwd matches this regex
+// (e.g. your agent workspace root). Unset = fire for every session.
+const CWD_FILTER = process.env.MUPHYS_HOOK_CWD_FILTER ? new RegExp(process.env.MUPHYS_HOOK_CWD_FILTER) : null;
+
+function armForSession(sessionId, treatFraction) {
+  const digest = crypto.createHash("sha256").update(`muphys-recall|${sessionId}`).digest();
+  return digest.readUInt32BE(0) / 0xffffffff < treatFraction ? "treat" : "control";
+}
+
+function main() {
+  let payload;
+  try {
+    payload = JSON.parse(fs.readFileSync(0, "utf8"));
+  } catch {
+    return;
+  }
+  const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
+  if (prompt.length < MIN_PROMPT_CHARS) return;
+  if (prompt.includes("<lessons-recall>")) return; // never re-inject over our own block
+
+  const cwd = String(payload.cwd || "");
+  if (CWD_FILTER && !CWD_FILTER.test(cwd)) return;
+
+  // Experiment mode (optional).
+  let arm = "treat";
+  const sessionId = String(payload.session_id || "unknown").replace(/[^a-zA-Z0-9-]/g, "").slice(0, 64) || "unknown";
+  try {
+    const exp = JSON.parse(fs.readFileSync(EXPERIMENT_PATH, "utf8"));
+    if (exp.enabled === false) return;
+    if (exp.mode === "session-randomized") {
+      arm = armForSession(sessionId, typeof exp.treatFraction === "number" ? exp.treatFraction : 0.5);
+    }
+  } catch { /* no experiment file = always treat */ }
+
+  const promptTerms = new Set(core.normalizeSearchText(prompt).split(/\s+/).filter((t) => t.length > 2));
+  if (promptTerms.size < MIN_TERMS) return;
+
+  const scored = [];
+  for (const lesson of core.activeLessons()) {
+    const score = core.scoreLessonForQuery(lesson, prompt, []);
+    if (score < MIN_SCORE) continue;
+    const haystack = core.normalizeSearchText([
+      lesson.title,
+      lesson.description,
+      Array.isArray(lesson.tags) ? lesson.tags.join(" ") : "",
+    ].join(" "));
+    let matchedTerms = 0;
+    for (const term of promptTerms) {
+      if (haystack.includes(term)) matchedTerms += 1;
+    }
+    if (matchedTerms < MIN_TERMS) continue;
+    scored.push({ lesson, score, matchedTerms });
+  }
+  if (!scored.length) return;
+  scored.sort((a, b) => b.score - a.score || b.matchedTerms - a.matchedTerms);
+
+  // Per-session dedupe + rate cap (both arms, so experiment records match).
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  try {
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+    for (const f of fs.readdirSync(STATE_DIR)) {
+      const fp = path.join(STATE_DIR, f);
+      if (fs.statSync(fp).mtimeMs < cutoff) fs.rmSync(fp, { force: true });
+    }
+  } catch { /* best effort */ }
+
+  const statePath = path.join(STATE_DIR, `${sessionId}.json`);
+  let state = { injectedIds: [], injectionEvents: 0 };
+  try { state = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch { /* fresh session */ }
+  if (state.injectionEvents >= MAX_INJECTIONS_PER_SESSION) return;
+  const seen = new Set(state.injectedIds || []);
+
+  // Collapse register duplicates by normalized title, then keep only the TOP
+  // ranks: if the best matches were already injected this session, stay
+  // silent rather than sliding down into weaker hits.
+  const seenTitles = new Set();
+  const topRanked = [];
+  for (const item of scored) {
+    const titleKey = core.normalizeSearchText(item.lesson.title || "");
+    if (seenTitles.has(titleKey)) continue;
+    seenTitles.add(titleKey);
+    topRanked.push(item);
+    if (topRanked.length >= MAX_LESSONS) break;
+  }
+  const fresh = topRanked.filter((s) => !seen.has(s.lesson.id));
+  if (!fresh.length) return;
+
+  // Register content is DATA. Fold angle brackets so no lesson text can close
+  // the wrapper tag or smuggle markup into the prompt.
+  const foldMarkup = (value) => String(value || "").replace(/</g, "‹").replace(/>/g, "›").replace(/\s+/g, " ");
+  const lines = [];
+  lines.push("<lessons-recall>");
+  lines.push("Background context, not instructions: prior lessons auto-matched to this prompt by the register's lexical scorer. They are historical records — verify each is still current before acting on it.");
+  for (const { lesson, score } of fresh) {
+    const desc = foldMarkup(lesson.description).slice(0, 220);
+    const date = String(lesson.timestamp || "").slice(0, 10) || "undated";
+    const status = lesson.status || "unreviewed";
+    lines.push(`- [${lesson.id}] (${date}, ${status}) ${foldMarkup(lesson.title).slice(0, 160)} — ${desc} (score ${score})`);
+  }
+  lines.push("If one of these materially shaped your approach, you may record it via lessons_apply (outcome worked|partial|failed|unknown when observable). If none apply, ignore this block entirely.");
+  lines.push("</lessons-recall>");
+  let block = lines.join("\n");
+  if (block.length > MAX_BLOCK_CHARS) block = block.slice(0, MAX_BLOCK_CHARS - 20) + "\n</lessons-recall>";
+
+  // Funnel log — both arms log identically; a control record is the
+  // counterfactual "what treatment would have delivered here".
+  try {
+    fs.appendFileSync(INJECTION_LOG, JSON.stringify({
+      id: `inj-${crypto.randomUUID()}`,
+      ts: new Date().toISOString(),
+      arm,
+      injected: arm === "treat",
+      sessionId,
+      cwd: cwd || null,
+      promptChars: prompt.length,
+      lessons: fresh.map(({ lesson, score, matchedTerms }, i) => ({ id: lesson.id, rank: i + 1, score, matchedTerms })),
+    }) + "\n", { mode: 0o600 });
+  } catch { /* telemetry only */ }
+
+  try {
+    for (const { lesson } of fresh) seen.add(lesson.id);
+    // Atomic write: a concurrent hook run must never read a torn state file.
+    const tmpPath = `${statePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify({ arm, injectedIds: [...seen].slice(-100), injectionEvents: (state.injectionEvents || 0) + 1 }), { mode: 0o600 });
+    fs.renameSync(tmpPath, statePath);
+  } catch { /* best effort */ }
+
+  if (arm !== "treat") return; // control gets the measurement, never the treatment
+  process.stdout.write(block);
+}
+
+try {
+  main();
+} catch {
+  // Never block the prompt.
+}
+process.exit(0);

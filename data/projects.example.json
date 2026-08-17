@@ -1,0 +1,7 @@
+{
+  "description": "Registry of project roots whose LESSONS-LEARNED.jsonl files feed the register via `muphys sync` (scope project:<slug>). Copy to $MUPHYS_HOME/projects.json. NEVER rename a slug: ids are content-derived from it, so a rename re-imports history under new ids.",
+  "projects": [
+    { "slug": "my-app", "root": "/absolute/path/to/my-app" },
+    { "slug": "infra", "root": "/absolute/path/to/infra", "file": "docs/LESSONS-LEARNED.jsonl" }
+  ]
+}
