@@ -107,6 +107,44 @@ declared), `lessons_candidate` (curation intake), `lessons_supersede`
 discipline alone fails — our primary agent called `lessons_query` once in
 433 sessions despite a "required" instruction. Ship the hook.
 
+### Beyond Claude Code (Codex, Cursor, Gemini CLI, your own harness)
+
+The register, the CLI, and the MCP server are **harness- and model-agnostic**
+— nothing in the system depends on which model reads the lessons. What varies
+is how each harness gets the two delivery paths:
+
+| Path | Claude Code | Any MCP harness (Codex CLI, Cursor, Cline, Zed, …) | Your own orchestrator |
+|---|---|---|---|
+| **Pull** (`lessons_query` etc.) | MCP server | MCP server — mount `node lib/register.cjs` (stdio) | call the exported functions directly |
+| **Push** (auto-injection) | the `UserPromptSubmit` hook, as shipped | no direct equivalent — see below | ~20 lines, see below |
+
+Two honest notes from our production telemetry:
+
+- **Pull works better on some harnesses than others.** Our GPT-harness
+  (Codex CLI) agents call `lessons_query` organically in most sessions with
+  just the [instructions template](templates/AGENTS-block.md); it was our
+  Claude-harness agents whose pull discipline collapsed (1 call in 433
+  sessions) — that failure is *why* the push hook exists. Measure your own
+  fleet before assuming either way; that's what the query log is for.
+- **Push on a harness without prompt hooks** means owning the prompt
+  assembly. If your orchestrator builds the messages it sends, implement
+  push with the same exported logic the hook uses:
+
+```js
+const { activeLessons, scoreLessonForQuery } = require("muphys-law/lib/register.cjs");
+const hits = activeLessons()
+  .map((l) => ({ l, s: scoreLessonForQuery(l, userPrompt, []) }))
+  .filter((x) => x.s >= 12)
+  .sort((a, b) => b.s - a.s)
+  .slice(0, 3);
+// prepend a clearly-labeled background block built from `hits` — copy the
+// wrapper format from hooks/lessons-recall-hook.mjs (data-framing, date +
+// status per lesson, markup folding). Keep it fail-open.
+```
+
+If your harness has its own pre-prompt hook point, a port of
+`hooks/lessons-recall-hook.mjs` is likely small — PRs welcome.
+
 ### Project-scoped lessons
 
 Any repo can keep a `LESSONS-LEARNED.jsonl` at its root (one
