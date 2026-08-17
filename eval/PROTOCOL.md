@@ -86,3 +86,7 @@ grader blind to arm.
 - Separate the claims the data licenses ("mechanism works, no harm observed")
   from the ones it doesn't ("improves agents by X%"). Put only the former in
   your README.
+- State your grader setup. Our published numbers come from a single blind
+  grader with rubric-anchored notes and locked pre-unblind grades, and no
+  inter-rater check — every sub-ceiling grade is quoted with its evidence so
+  it can be re-adjudicated. If you can afford two graders, measure agreement.

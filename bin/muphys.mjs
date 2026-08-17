@@ -15,9 +15,10 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const core = require(path.join(path.dirname(new URL(import.meta.url).pathname), "..", "lib", "register.cjs"));
+const core = require(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib", "register.cjs"));
 
 const [, , command, ...rest] = process.argv;
 

@@ -36,9 +36,14 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
+// fileURLToPath, not new URL(...).pathname: the pathname form yields %20 for
+// spaces and a bogus leading slash on Windows, and a top-level import crash
+// lands OUTSIDE the fail-open try/catch below — silently breaking the
+// "never block a prompt" contract for anyone who clones into "My Projects".
 const require = createRequire(import.meta.url);
-const core = require(path.join(path.dirname(new URL(import.meta.url).pathname), "..", "lib", "register.cjs"));
+const core = require(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib", "register.cjs"));
 
 const MUPHYS_HOME = core.MUPHYS_HOME;
 const STATE_DIR = path.join(MUPHYS_HOME, "hook-state");
