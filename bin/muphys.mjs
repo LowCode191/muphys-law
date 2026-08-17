@@ -13,6 +13,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -256,7 +257,6 @@ switch (command) {
       // Only alarm if the hook appears MOUNTED somewhere — a fresh install
       // with no hook yet is healthy, not broken.
       let mounted = false;
-      const os = await import("node:os");
       for (const settingsPath of [
         path.join(os.homedir(), ".claude", "settings.json"),
         path.join(process.cwd(), ".claude", "settings.json"),
