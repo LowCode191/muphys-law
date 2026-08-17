@@ -2,7 +2,7 @@
 
 ![Muphys Law — whatever can go wrong, will — once](assets/banner.svg)
 
-**A lessons register for AI agent fleets — with the receipts.**
+**A lessons-learned register for AI agent fleets — with the receipts.**
 
 *Yes, "Muphys." The name is a misspelling of Murphy's law that stuck — fitting
 for a project about mistakes becoming institutional memory (see also

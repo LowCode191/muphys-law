@@ -66,6 +66,6 @@
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#000000">
     <text x="470" y="150" font-size="72" font-weight="700" letter-spacing="3">MUPHYS LAW</text>
     <text x="474" y="196" font-size="24" fill="#000000">Whatever can go wrong, will &#8212; once.</text>
-    <text x="474" y="232" font-size="16" fill="#555555">a lessons register for AI agent fleets</text>
+    <text x="474" y="232" font-size="16" fill="#555555">a lessons-learned register for AI agent fleets</text>
   </g>
 </svg>

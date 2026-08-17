@@ -1,7 +1,7 @@
 {
   "name": "muphys-law",
   "version": "0.1.0",
-  "description": "A lessons register for AI agent fleets: capture operational lessons, curate them, and push-inject the relevant ones into agent context \u2014 with the telemetry to prove whether it works.",
+  "description": "A lessons-learned register for AI agent fleets: capture operational lessons, curate them, and push-inject the relevant ones into agent context \u2014 with the telemetry to prove whether it works.",
   "license": "MIT",
   "type": "module",
   "bin": {
