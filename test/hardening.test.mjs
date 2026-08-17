@@ -409,3 +409,66 @@ test("round 7.3: divergent same-id lines are a doctor issue — the reader is ma
   const doctor = JSON.parse(doctorOut);
   assert.ok(doctor.issues.some((i) => i.includes("llg-divergent001")), "the divergent id is named");
 });
+
+test("round 7.4: sync rows are pure functions of source content — two syncs, byte-identical registers", () => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74src-"));
+  fs.writeFileSync(path.join(source, "LESSONS-LEARNED.jsonl"),
+    JSON.stringify({ title: "Dated lesson", description: "Has a source date.", date: "2026-03-04" }) + "\n" +
+    JSON.stringify({ title: "Undated lesson", description: "No date in the source row." }) + "\n");
+  const registers = [];
+  for (const label of ["a", "b"]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), `muphys-r74${label}-`));
+    fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({ projects: [{ slug: "det", root: source }] }));
+    execFileSync("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" });
+    registers.push(fs.readFileSync(path.join(home, "lessons.jsonl"), "utf8"));
+  }
+  assert.equal(registers[0], registers[1], "same source must produce byte-identical durable rows regardless of when sync runs");
+  const rows = registers[0].trim().split("\n").map((l) => JSON.parse(l));
+  const dated = rows.find((r) => r.title === "Dated lesson");
+  const undated = rows.find((r) => r.title === "Undated lesson");
+  assert.equal(dated.timestamp, "2026-03-04T12:00:00");
+  assert.ok(!("timestamp" in undated), "an undated source row stays undated — no wall-clock fallback");
+  assert.ok(!("synced_at" in dated) && !("synced_at" in undated), "no wall clock rides in a durable row");
+});
+
+test("round 7.4: a live foreign lock is respected AND survives the run — no blind unlock", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74lock-"));
+  fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({ projects: [{ slug: "lk", root: home }] }));
+  fs.writeFileSync(path.join(home, "LESSONS-LEARNED.jsonl"),
+    JSON.stringify({ title: "Lock test lesson", description: "Body for the lock test." }) + "\n");
+  const lockPath = path.join(home, ".sync.lock");
+  // This test process's pid IS alive — the sync child must treat the lock as
+  // held, skip, and leave the file untouched.
+  const foreign = JSON.stringify({ pid: process.pid, ts: "2026-01-01T00:00:00Z" });
+  fs.writeFileSync(lockPath, foreign);
+  const outRaw = execFileSync("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" });
+  assert.equal(JSON.parse(outRaw).skipped, true, "a live holder is never displaced");
+  assert.equal(fs.readFileSync(lockPath, "utf8"), foreign, "the foreign lock survives byte-for-byte — release only ever removes a lock naming the releaser's own pid");
+});
+
+test("round 7.4: doctor's liveness alarm is scoped to THIS install's hook path", () => {
+  const hookPath = path.join(HERE, "..", "hooks", "lessons-recall-hook.mjs");
+  // Foreign checkout mounted (same basename, different path): no alarm.
+  const homeForeign = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74docf-"));
+  fs.mkdirSync(path.join(homeForeign, ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(homeForeign, ".claude", "settings.json"),
+    JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "node /some/other/checkout/hooks/lessons-recall-hook.mjs" }] }] } }));
+  const okOut = JSON.parse(execFileSync("node", [CLI, "doctor"],
+    { env: { ...process.env, MUPHYS_HOME: homeForeign, HOME: homeForeign }, encoding: "utf8" }));
+  assert.equal(okOut.ok, true, "another install's hook logs to ITS home — alarming here is a false positive");
+  // THIS install mounted, no injection log: alarm.
+  const homeMine = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74docm-"));
+  fs.mkdirSync(path.join(homeMine, ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(homeMine, ".claude", "settings.json"),
+    JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: `node ${hookPath}` }] }] } }));
+  let code = 0;
+  let raw = "";
+  try {
+    raw = execFileSync("node", [CLI, "doctor"], { env: { ...process.env, MUPHYS_HOME: homeMine, HOME: homeMine }, encoding: "utf8" });
+  } catch (err) {
+    code = err.status;
+    raw = err.stdout;
+  }
+  assert.equal(code, 1, "this install mounted with no injection log must alarm");
+  assert.ok(JSON.parse(raw).issues.some((i) => i.includes("never fired")));
+});

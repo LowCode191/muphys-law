@@ -248,11 +248,22 @@ switch (command) {
         const id = "llp-" + crypto.createHash("sha1").update(JSON.stringify([slug, title, description])).digest("hex").slice(0, 12);
         if (existing.has(id)) { row.duplicates += 1; return; }
         existing.add(id);
-        const date = typeof entry.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.date) ? entry.date : now.slice(0, 10);
+        // The durable row is a PURE FUNCTION of source content (slug + line
+        // content + line position): no wall clock rides in it, so a raced
+        // double-append is byte-identical and the reader's first-wins
+        // collapse is a true no-op, never a mask. Sync-time telemetry lives
+        // in the run summary only. Undated source rows stay undated (every
+        // reader tolerates a missing timestamp) — a today() fallback would
+        // reintroduce a midnight divergence window. Known residue: `source`
+        // carries the line number, so an edit that MOVES a lesson mid-race
+        // can still produce divergent provenance rows — genuinely different
+        // source states, surfaced by doctor for a curator, never merged
+        // silently.
+        const date = typeof entry.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.date) ? entry.date : null;
         toAppend.push(JSON.stringify({
           id,
           author: typeof entry.author === "string" && entry.author.trim() ? entry.author.trim().slice(0, 64) : slug,
-          timestamp: `${date}T12:00:00`,
+          ...(date ? { timestamp: `${date}T12:00:00` } : {}),
           title,
           description,
           evidence: Array.isArray(entry.evidence) ? entry.evidence.filter(Boolean).map(String).slice(0, 20) : [],
@@ -261,7 +272,6 @@ switch (command) {
           project: slug,
           status: "active",
           source: `project-sync:${slug}#L${index + 1}`,
-          synced_at: now,
         }));
         row.appended += 1;
       });
@@ -273,7 +283,8 @@ switch (command) {
       // test caught the previous rm-based reap deleting a winner's FRESH
       // lock: read-judge-dead, then rm hits a lock that was replaced in the
       // gap). Correctness therefore rests on two structural facts instead:
-      // sync ids are content-derived (a double-append writes the SAME row)
+      // sync rows are pure functions of source content (a double-append
+      // writes byte-identical rows — no wall clock rides in a durable row)
       // and readRegister collapses duplicate ids at read time (first wins),
       // so a lost race is a no-op at every read site. The lock's job is to
       // make that rare, not impossible.
@@ -342,13 +353,21 @@ switch (command) {
           fs.mkdirSync(path.dirname(core.REGISTER_JSONL), { recursive: true });
           fs.appendFileSync(core.REGISTER_JSONL, stillNew.join("\n") + "\n", { mode: 0o600 });
         }
-        out({ dryRun: false, totalAppended: stillNew.length, projects: summary });
+        out({ dryRun: false, totalAppended: stillNew.length, syncedAt: now, projects: summary });
       } finally {
-        fs.rmSync(lockPath, { force: true });
+        // Ownership-proved release: remove the lock only if it provably
+        // names THIS pid. If ours was yanked and replaced by another
+        // contender's, a blind rm here would delete THEIR lock and cascade
+        // a second unserialized writer. Unreadable or missing = not
+        // provably ours = leave it (an unreadable lock is judged dead by
+        // the next contender's reap, so nothing deadlocks).
+        try {
+          if (Number(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid) === process.pid) fs.rmSync(lockPath, { force: true });
+        } catch { /* not provably ours — leave it */ }
       }
       break;
     }
-    out({ dryRun: args["dry-run"] === true, totalAppended: 0, projects: summary });
+    out({ dryRun: args["dry-run"] === true, totalAppended: 0, syncedAt: now, projects: summary });
     break;
   }
 
@@ -396,13 +415,19 @@ switch (command) {
     if (!fs.existsSync(injLog)) {
       // Only alarm if the hook appears MOUNTED somewhere — a fresh install
       // with no hook yet is healthy, not broken.
+      // Match THIS install's absolute hook path, not the basename: another
+      // checkout's mounted hook logs to ITS home, and alarming here for it
+      // is a false positive. A symlinked mount won't string-match and fails
+      // toward silence — accepted: this alarm only ever fires when it can
+      // name a hook that provably should be writing THIS install's log.
+      const hookPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks", "lessons-recall-hook.mjs");
       let mounted = false;
       for (const settingsPath of [
         path.join(os.homedir(), ".claude", "settings.json"),
         path.join(process.cwd(), ".claude", "settings.json"),
       ]) {
         try {
-          if (fs.readFileSync(settingsPath, "utf8").includes("lessons-recall-hook.mjs")) mounted = true;
+          if (fs.readFileSync(settingsPath, "utf8").includes(hookPath)) mounted = true;
         } catch { /* absent */ }
       }
       if (mounted) {
