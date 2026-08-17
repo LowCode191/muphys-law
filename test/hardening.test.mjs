@@ -21,7 +21,7 @@ function cli(cliArgs, env = {}) {
   return execFileSync("node", [CLI, ...cliArgs], { env: { ...process.env, MUPHYS_HOME: HOME, ...env }, encoding: "utf8" });
 }
 
-// Round 7 split the dedupe surfaces: wouldRetire (destructive, NFC-exact
+// Round 7 split the dedupe surfaces: wouldRetire (destructive, byte-identical
 // only) and reviewCandidates (report-only fold near-matches). Distinctness
 // tests must assert absence from BOTH.
 function dedupePlan() {
@@ -125,7 +125,7 @@ test("dedupe: mixed-language lessons sharing ASCII tokens are NOT conflated", ()
   }
 });
 
-test("dedupe: exact non-Latin duplicates ARE grouped (NFC-exact tier)", () => {
+test("dedupe: exact non-Latin duplicates ARE grouped (byte-identical tier)", () => {
   const dupes = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "重複した教訓のタイトル", description: "全く同じ説明文です。" },
     { title: "重複した教訓のタイトル", description: "全く同じ説明文です。" },
@@ -166,16 +166,22 @@ test("dedupe fold preserves combining marks: Devanagari क and कि never col
   }
 });
 
-test("dedupe fold NFC-normalizes: precomposed and decomposed forms of the same text ARE grouped", () => {
-  const precomposed = "café lesson";               // é as U+00E9
-  const decomposed = "café lesson";               // e + combining acute
+test("round 7: NFC canonical forms are review candidates, never auto-retired", () => {
+  // Canonically equivalent ≠ byte-identical: a lesson quoting the literal
+  // decomposed e+combining-acute sequence is a different instruction than
+  // one quoting precomposed é. The fold (which NFC-normalizes) surfaces the
+  // pair for a curator; the destructive gate refuses it.
+  const precomposed = "caf\u00e9 lesson";
+  const decomposed = "cafe\u0301 lesson";
   assert.notEqual(precomposed, decomposed, "sanity: different code points");
+  assert.equal(precomposed.normalize("NFC"), decomposed.normalize("NFC"), "sanity: canonically equivalent");
   const dupes = core.appendLessons(core.lessonEntries({ lessons: [
     { title: precomposed, description: `${precomposed} description body.` },
     { title: decomposed, description: `${decomposed} description body.` },
   ] }), { author: "test" });
-  const { retire } = dedupePlan();
-  assert.ok(dupes.some((record) => retire.includes(record.id)), "canonically-equivalent forms are the same text — NFC-exact tier must auto-retire one");
+  const { retire, review } = dedupePlan();
+  for (const record of dupes) assert.ok(!retire.includes(record.id), "canonical-form variants are not byte-identical — they must never auto-retire");
+  assert.ok(dupes.every((record) => review.includes(record.id)), "canonical-form variants must surface together for curator review");
 });
 
 test("dedupe never merges emoji-distinguished lessons (✅ vs ❌ are opposites)", () => {
@@ -245,7 +251,7 @@ test("round 7: separator-dash variants are review candidates, never auto-retired
 // destructive path — proven under a real --apply, not a dry run.
 // ---------------------------------------------------------------------------
 
-test("round 7: --apply retires only NFC-exact duplicates; every semantic near-match survives", () => {
+test("round 7: --apply retires only byte-identical duplicates; every semantic near-match survives", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r7-"));
   const seed = [
     // (1) composite-key delimiter injection
@@ -260,7 +266,10 @@ test("round 7: --apply retires only NFC-exact duplicates; every semantic near-ma
     // (4) lessons about exact characters
     { title: "Charset rule", description: "Reject character „" },
     { title: "Charset rule", description: 'Reject character "' },
-    // (5) a true byte-identical duplicate — the one pair that must still die
+    // (5) canonically equivalent but not byte-identical (NFC vs NFD é)
+    { title: "Caf\u00e9 rule", description: "The caf\u00e9 rule body." },
+    { title: "Cafe\u0301 rule", description: "The cafe\u0301 rule body." },
+    // (6) a true byte-identical duplicate — the one pair that must still die
     { title: "True duplicate", description: "Identical description body." },
     { title: "True duplicate", description: "Identical description body." },
   ];
@@ -277,7 +286,7 @@ test("round 7: --apply retires only NFC-exact duplicates; every semantic near-ma
   assert.equal(superseded.length, 1);
   assert.equal(superseded[0].title, "True duplicate");
   const active = rows.filter((r) => r.status === "active");
-  assert.equal(active.length, 9, "all eight semantic near-matches plus the kept duplicate stay active");
+  assert.equal(active.length, 11, "all ten semantic near-matches plus the kept duplicate stay active");
 
   const review = JSON.stringify(result.reviewCandidates || []);
   const byContent = (title, desc) => rows.find((r) => r.title === title && r.description === desc);
@@ -286,6 +295,7 @@ test("round 7: --apply retires only NFC-exact duplicates; every semantic near-ma
     ["Delimiter rule", "Required delimiter is —"], ["Delimiter rule", "Required delimiter is"],
     ["Printf payload", "line one\npayload line two"], ["Printf payload", "line one payload line two"],
     ["Charset rule", "Reject character „"], ["Charset rule", 'Reject character "'],
+    ["Caf\u00e9 rule", "The caf\u00e9 rule body."], ["Cafe\u0301 rule", "The cafe\u0301 rule body."],
   ]) {
     assert.ok(review.includes(byContent(title, desc).id), `review candidates must include ${title} / ${desc}`);
   }

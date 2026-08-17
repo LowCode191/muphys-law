@@ -178,11 +178,13 @@ scoped `project:<slug>`. Never rename a slug (ids derive from it).
 6. **Truncation is explicit.** A silently cut description can lose exactly
    the actionable rule.
 7. **Lossy matching never gates destruction.** `dedupe --apply` retires only
-   NFC-exact content (compared as a structural tuple — no delimiter to
-   inject); fuzzy/folded matches are *reported* for curator review, never
-   auto-retired. Seven adversarial review rounds proved the theorem the hard
-   way: every lossy fold has a false-merge class, and enumerating them never
-   terminates. A missed merge is cheap; a wrongly retired lesson is not.
+   byte-identical content (compared as a structural tuple — no delimiter to
+   inject); every fuzzy match — typographic variants, whitespace reflow, even
+   NFC canonical forms — is *reported* for curator review, never auto-retired.
+   Seven adversarial review rounds proved the theorem the hard way: every
+   equivalence short of byte identity has a false-merge class, and enumerating
+   them never terminates. A missed merge is cheap; a wrongly retired lesson is
+   not.
 
 ## Templates
 

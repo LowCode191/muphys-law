@@ -6,7 +6,7 @@
 //   muphys query "<text>" [--tags a,b] [--limit N]
 //   muphys supersede --ids id1,id2 --superseded-by idX --reason "..."
 //   muphys deprecate --ids id1,id2 --reason "..."
-//   muphys dedupe [--apply]        NFC-exact duplicates -> superseded; near-matches reported for review
+//   muphys dedupe [--apply]        byte-identical duplicates -> superseded; near-matches reported for review
 //   muphys sync [--dry-run]        pull project LESSONS-LEARNED.jsonl files in
 //   muphys doctor                  integrity + liveness checks
 //   muphys stats                   register/funnel counts
@@ -111,18 +111,20 @@ switch (command) {
     // round 1 (title "a|b" + desc "c" ≡ title "a" + desc "b|c").
     //
     // So the split:
-    //   AUTO-RETIRE (--apply) — NFC-exact tuple equality ONLY. NFC is
-    //     Unicode's own definition of "same text"; the JSON-array key is
-    //     structural, so there is no delimiter to inject. No case fold, no
-    //     typographic map, no whitespace collapse, no trim. Nothing lossy
-    //     ever gates destruction.
+    //   AUTO-RETIRE (--apply) — BYTE-IDENTICAL tuple equality ONLY, keyed
+    //     structurally (JSON array — no delimiter to inject). Not even NFC:
+    //     a lesson quoting the literal decomposed e+combining-acute sequence
+    //     is a different instruction than one quoting precomposed é, the
+    //     same way „ differs from ". Byte identity is the only equivalence
+    //     with zero destructive collisions — and the only gate with nothing
+    //     left to adversarially probe.
     //   REVIEW CANDIDATES (always report-only) — the folded near-match
-    //     (typographic variants, whitespace runs, separator dashes: the
-    //     original backfill class) is surfaced for a curator to judge and
-    //     supersede manually. Missed-or-deferred merge is the cheap error;
-    //     a false auto-retire is the expensive one.
-    const nfc = (t) => String(t || "").normalize("NFC");
-    const exactKey = (lesson) => JSON.stringify([nfc(lesson.title), nfc(lesson.description)]);
+    //     (typographic variants, whitespace runs, separator dashes, and
+    //     NFC canonical forms: the original backfill classes) is surfaced
+    //     for a curator to judge and supersede manually. Missed-or-deferred
+    //     merge is the cheap error; a false auto-retire is the expensive
+    //     one.
+    const exactKey = (lesson) => JSON.stringify([String(lesson.title || ""), String(lesson.description || "")]);
     const TYPOGRAPHIC = new Map(Object.entries({
       "‘": "'", "’": "'", "‚": "'", "‛": "'",
       "“": '"', "”": '"', "„": '"', "‟": '"',
@@ -142,7 +144,7 @@ switch (command) {
 
     const exactGroups = new Map();
     for (const lesson of active) {
-      if (!nfc(lesson.title) || !nfc(lesson.description)) continue; // never judge on empty content
+      if (!String(lesson.title || "") || !String(lesson.description || "")) continue; // never judge on empty content
       const key = exactKey(lesson);
       if (!exactGroups.has(key)) exactGroups.set(key, []);
       exactGroups.get(key).push(lesson);
@@ -168,8 +170,9 @@ switch (command) {
     const candidates = [];
     for (const members of foldGroups.values()) {
       if (members.length < 2) continue;
-      // Groups that are entirely NFC-exact already live in the auto-retire
-      // plan; a candidate group must contain at least two DISTINCT contents.
+      // Groups that are entirely byte-identical already live in the
+      // auto-retire plan; a candidate group must contain at least two
+      // DISTINCT contents.
       if (new Set(members.map(exactKey)).size < 2) continue;
       candidates.push({ ids: members.map((m) => m.id), titles: members.map((m) => m.title) });
     }
