@@ -145,13 +145,25 @@ test("sync: concurrent runs against a STALE lock never write duplicate ids", asy
   fs.writeFileSync(staleLock, JSON.stringify({ pid: 999999999, ts: "2026-01-01T00:00:00Z" }));
   const { execFile } = await import("node:child_process");
   const run = () => new Promise((resolve) => execFile("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: raceHome } }, () => resolve()));
-  await Promise.all([run(), run(), run()]);
+  await Promise.all([run(), run(), run(), run(), run()]);
   // settle: one more sync with no lock contention picks up any stragglers
   await run();
+  // The contract (see the sync lock comment): the lock makes double-appends
+  // rare, not impossible — POSIX has no path compare-and-swap. What IS
+  // guaranteed: any duplicated id is a byte-identical line (content-derived
+  // ids), and the READER collapses it, so every read site sees each lesson
+  // exactly once.
   const register = path.join(raceHome, "lessons.jsonl");
-  const ids = fs.readFileSync(register, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l).id);
-  assert.equal(new Set(ids).size, ids.length, `duplicate ids written under contention: ${ids.join(",")}`);
-  assert.equal(ids.length, 2, "both lessons land exactly once");
+  const rawLines = fs.readFileSync(register, "utf8").split("\n").filter(Boolean);
+  const firstById = new Map();
+  for (const line of rawLines) {
+    const rowId = JSON.parse(line).id;
+    if (firstById.has(rowId)) assert.equal(firstById.get(rowId), line, "a duplicated id must only ever be the same byte-identical row");
+    else firstById.set(rowId, line);
+  }
+  assert.equal(firstById.size, 2, "both lessons land, each under exactly one id");
+  const stats = JSON.parse(execFileSync("node", [CLI, "stats"], { env: { ...process.env, MUPHYS_HOME: raceHome }, encoding: "utf8" }));
+  assert.equal(stats.register.total, 2, "the reader collapses any raced duplicate line to exactly one lesson");
 });
 
 test("dedupe fold preserves combining marks: Devanagari क and कि never collide", () => {
@@ -360,4 +372,40 @@ test("round 7.2: candidates reflect the post-plan register and carry usable memb
     assert.equal(typeof member.title, "string");
     assert.equal(typeof member.description, "string", "description-only variants are indistinguishable without descriptions");
   }
+});
+
+test("round 7.3: reader collapses duplicate-id lines (first wins) and dedupe never self-retires them", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r73-"));
+  const rowX = JSON.stringify({ id: "llp-dupline00001", title: "Synced lesson", description: "Body of the synced lesson.", status: "active" });
+  const rowY = JSON.stringify({ id: "llg-distinct0001", title: "Other lesson", description: "A different body entirely.", status: "active" });
+  fs.writeFileSync(path.join(home, "lessons.jsonl"), rowX + "\n" + rowX + "\n" + rowY + "\n");
+  const env = { ...process.env, MUPHYS_HOME: home, HOME: home };
+  const stats = JSON.parse(execFileSync("node", [CLI, "stats"], { env, encoding: "utf8" }));
+  assert.equal(stats.register.total, 2, "the duplicated line is one lesson to every reader");
+  const result = JSON.parse(execFileSync("node", [CLI, "dedupe", "--apply"], { env, encoding: "utf8" }));
+  assert.equal(result.retired, 0, "a collapsed duplicate line must never become a self-retirement");
+  const doctor = JSON.parse(execFileSync("node", [CLI, "doctor"], { env, encoding: "utf8" }));
+  assert.equal(doctor.register.duplicateIdLines, 1, "doctor counts the extra line");
+  assert.equal(doctor.ok, true, "byte-identical duplicate lines are a benign, reported artifact");
+});
+
+test("round 7.3: divergent same-id lines are a doctor issue — the reader is masking data", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r73d-"));
+  const first = JSON.stringify({ id: "llg-divergent001", title: "First version", description: "The first body.", status: "active" });
+  const second = JSON.stringify({ id: "llg-divergent001", title: "Second version", description: "A conflicting body.", status: "active" });
+  fs.writeFileSync(path.join(home, "lessons.jsonl"), first + "\n" + second + "\n");
+  const env = { ...process.env, MUPHYS_HOME: home, HOME: home };
+  const stats = JSON.parse(execFileSync("node", [CLI, "stats"], { env, encoding: "utf8" }));
+  assert.equal(stats.register.total, 1, "first occurrence wins");
+  let doctorOut = "";
+  let doctorCode = 0;
+  try {
+    doctorOut = execFileSync("node", [CLI, "doctor"], { env, encoding: "utf8" });
+  } catch (err) {
+    doctorCode = err.status;
+    doctorOut = err.stdout;
+  }
+  assert.equal(doctorCode, 1, "divergent duplicate ids must fail doctor");
+  const doctor = JSON.parse(doctorOut);
+  assert.ok(doctor.issues.some((i) => i.includes("llg-divergent001")), "the divergent id is named");
 });

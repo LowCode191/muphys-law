@@ -267,17 +267,24 @@ switch (command) {
       });
     }
     if (args["dry-run"] !== true && toAppend.length) {
-      // Single-writer lock: two concurrent syncs both pass the read-side
-      // duplicate check and both append the same content id. The lock is a
-      // FILE created with O_EXCL (the atomic front door) containing the
-      // holder's pid. Takeover policy: a lock whose recorded pid is still
-      // alive is NEVER touched — that closes the TOCTOU where a process
-      // judges a lock stale by age and then removes a fresh lock that
-      // replaced it in the gap (any age-based dir takeover has that hole; a
-      // live-pid check cannot displace an active writer). A dead-pid lock is
-      // unlinked and re-contested through O_EXCL, so racing reapers get
-      // exactly one winner. Recycled-pid false positives fail toward
-      // "skip this run" — the safe direction — and clear on the next tick.
+      // Single-writer lock — best-effort serialization, NOT the correctness
+      // gate. POSIX offers no compare-and-swap on paths, so every judge-
+      // then-mutate lock protocol has some residual window (our own stress
+      // test caught the previous rm-based reap deleting a winner's FRESH
+      // lock: read-judge-dead, then rm hits a lock that was replaced in the
+      // gap). Correctness therefore rests on two structural facts instead:
+      // sync ids are content-derived (a double-append writes the SAME row)
+      // and readRegister collapses duplicate ids at read time (first wins),
+      // so a lost race is a no-op at every read site. The lock's job is to
+      // make that rare, not impossible.
+      //
+      // Protocol: O_EXCL create is the front door; a lock naming a LIVE pid
+      // is never touched. A dead lock is reaped by RENAME-CLAIM: rename the
+      // lock to a private tombstone (one winner per inode — a losing reaper
+      // gets ENOENT and can no longer delete anything it didn't judge),
+      // re-judge the CLAIMED content, and if it turns out live (yanked a
+      // fresh lock inside the read-judge gap) restore it with a no-clobber
+      // link and skip this run — failing toward safety.
       const lockPath = path.join(core.MUPHYS_HOME, ".sync.lock");
       const tryLock = () => {
         try {
@@ -301,10 +308,27 @@ switch (command) {
           holderAlive = false; // unreadable/legacy lock artifact: treat as dead
         }
         if (holderAlive) return false;
+        const tomb = `${lockPath}.reap.${process.pid}`;
         try {
-          fs.rmSync(lockPath, { recursive: true, force: true }); // dead holder; ENOENT fine
-        } catch { /* another reaper got it */ }
-        return tryLock(); // one O_EXCL winner among racing reapers
+          fs.renameSync(lockPath, tomb); // claim: exactly one reaper wins this inode
+        } catch {
+          return tryLock(); // another reaper claimed it first; contend fresh
+        }
+        let claimedAlive = false;
+        try {
+          const claimed = JSON.parse(fs.readFileSync(tomb, "utf8"));
+          process.kill(Number(claimed.pid), 0);
+          claimedAlive = true;
+        } catch { /* unreadable or dead = reapable */ }
+        if (claimedAlive) {
+          // We yanked a FRESH lock created inside our read-judge gap.
+          // Restore without clobbering any newer lock, and skip this run.
+          try { fs.linkSync(tomb, lockPath); } catch { /* newer lock exists; reader-side id collapse absorbs the holder's now-unserialized append */ }
+          try { fs.rmSync(tomb, { force: true }); } catch { /* best effort */ }
+          return false;
+        }
+        try { fs.rmSync(tomb, { force: true }); } catch { /* best effort */ }
+        return tryLock(); // one O_EXCL winner among fresh contenders
       };
       if (!acquireLock()) {
         out({ skipped: true, reason: "another sync holds the lock", lock: lockPath });
@@ -337,6 +361,25 @@ switch (command) {
       ? fs.readFileSync(core.REGISTER_JSONL, "utf8").split("\n").filter((l) => l.trim()).filter((l) => { try { return !JSON.parse(l).id; } catch { return false; } }).length
       : 0;
     if (withoutExplicitId > 0) issues.push(`${withoutExplicitId} register rows lack an explicit id — run writers from this package only`);
+    // Duplicate-id LINES: benign when byte-identical (concurrent-sync
+    // artifact; the reader collapses them, first wins) — reported as a
+    // count. DIVERGENT same-id lines mean the reader is masking real data
+    // and a curator must repair the file: that is an issue.
+    let duplicateIdLines = 0;
+    if (fs.existsSync(core.REGISTER_JSONL)) {
+      const firstLineById = new Map();
+      for (const line of fs.readFileSync(core.REGISTER_JSONL, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        let rowId;
+        try { rowId = JSON.parse(line).id; } catch { continue; }
+        if (typeof rowId !== "string" || !rowId) continue;
+        if (!firstLineById.has(rowId)) { firstLineById.set(rowId, line); continue; }
+        duplicateIdLines += 1;
+        if (firstLineById.get(rowId) !== line) {
+          issues.push(`divergent duplicate-id lines for ${rowId} — the reader keeps the FIRST and is masking the rest; repair the register file`);
+        }
+      }
+    }
     for (const lesson of rows) {
       if (lesson.status !== "superseded" || !lesson.superseded_by) continue;
       const replacement = rows.find((other) => other.id === lesson.superseded_by);
@@ -366,7 +409,7 @@ switch (command) {
         issues.push(`hook is mounted but no injection log exists at ${injLog} — it has never fired. Verify by EFFECT: send a real prompt and watch this file. Reading settings back proves nothing (some harnesses never load the scope you installed into).`);
       }
     }
-    out({ register: { total: rows.length, active: core.activeLessons().length }, issues, ok: issues.length === 0 });
+    out({ register: { total: rows.length, active: core.activeLessons().length, duplicateIdLines }, issues, ok: issues.length === 0 });
     process.exit(issues.length ? 1 : 0);
     break;
   }
