@@ -1,12 +1,31 @@
 {
   "name": "muphys-law",
   "version": "0.1.0",
-  "description": "A lessons-learned register for AI agent fleets: capture operational lessons, curate them, and push-inject the relevant ones into agent context \u2014 with the telemetry to prove whether it works.",
+  "description": "A lessons-learned register for AI agent fleets: capture operational lessons, curate them, and push-inject the relevant ones into agent context — with the telemetry to prove whether it works.",
+  "author": "LowCode191",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LowCode191/muphys-law.git"
+  },
+  "homepage": "https://github.com/LowCode191/muphys-law#readme",
+  "bugs": {
+    "url": "https://github.com/LowCode191/muphys-law/issues"
+  },
   "type": "module",
   "bin": {
     "muphys": "bin/muphys.mjs"
   },
+  "files": [
+    "bin/",
+    "lib/",
+    "hooks/",
+    "templates/",
+    "eval/",
+    "data/sample-lessons.jsonl",
+    "data/projects.example.json",
+    "assets/banner.svg"
+  ],
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
     "mcp": "node lib/register.cjs"

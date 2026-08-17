@@ -1,6 +1,6 @@
 # Muphys Law
 
-![Muphys Law — whatever can go wrong, will — once](assets/banner.svg)
+![Muphys Law — whatever can go wrong, will — once](https://raw.githubusercontent.com/LowCode191/muphys-law/main/assets/banner.svg)
 
 **A lessons-learned register for AI agent fleets — with the receipts.**
 
