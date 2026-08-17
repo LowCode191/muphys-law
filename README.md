@@ -45,11 +45,12 @@ data licenses:
   of the lessons. If your agents are newer than ours, expect more headroom;
   we can't prove it from our data.
 - **Known weak link: retrieval.** The built-in scorer is lexical; on our
-  golden set its paraphrase recall was poor. The push hook compensates by
-  scoring full prompts rather than short queries. An optional embedding
-  backend now exists (below) — in our bakeoff embeddings doubled lexical's
-  should-have-fired recall (0.57 vs 0.29) — but if you improve one thing,
-  improve retrieval further, and re-run the eval.
+  24-probe golden set it surfaces the expected lesson in the top 3 only
+  10/24 times. The optional embedding backend (below) lifts that to 14/24
+  top-3 and 16/24 top-8 — measured on this exact implementation against a
+  local qwen3-embedding backend. The push hook compensates by scoring full
+  prompts rather than short queries, but if you improve one thing, improve
+  retrieval further — and re-run the eval.
 
 ## Quickstart (5 minutes)
 
