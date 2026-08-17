@@ -9,7 +9,8 @@
 //   muphys dedupe [--apply]        byte-identical duplicates -> superseded; near-matches reported for review
 //   muphys sync [--dry-run]        pull project LESSONS-LEARNED.jsonl files in
 //   muphys doctor                  integrity + liveness checks
-//   muphys stats                   register/funnel counts
+//   muphys stats [--by-lesson]     register/funnel counts + outcome rollup
+//   muphys mcp                     run the stdio MCP server (npx-mountable)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -54,6 +55,33 @@ function fail(message) {
 
 const args = parseArgs(rest);
 
+function outcomeRollup() {
+  // Per-lesson effectiveness from the apply log: the funnel's last hop,
+  // finally read instead of only written.
+  const perLesson = new Map();
+  const totals = { applies: 0, worked: 0, partial: 0, failed: 0, unknown: 0, unspecified: 0 };
+  if (fs.existsSync(core.USAGE_JSONL)) {
+    for (const line of fs.readFileSync(core.USAGE_JSONL, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      let row;
+      try { row = JSON.parse(line); } catch { continue; }
+      if (!Array.isArray(row.lessonIds)) continue;
+      const outcome = typeof row.outcome === "string" && ["worked", "partial", "failed", "unknown"].includes(row.outcome) ? row.outcome : "unspecified";
+      totals.applies += 1;
+      totals[outcome] += 1;
+      for (const id of row.lessonIds) {
+        if (typeof id !== "string") continue;
+        if (!perLesson.has(id)) perLesson.set(id, { id, applies: 0, worked: 0, partial: 0, failed: 0, unknown: 0, unspecified: 0 });
+        const bucket = perLesson.get(id);
+        bucket.applies += 1;
+        bucket[outcome] += 1;
+      }
+    }
+  }
+  return { totals, perLesson };
+}
+
+
 switch (command) {
   case "add": {
     if (!args.title || !args.description) fail("--title and --description are required");
@@ -73,7 +101,7 @@ switch (command) {
   }
 
   case "query": {
-    const result = core.callTool("lessons_query", {
+    const result = await core.callTool("lessons_query", {
       query: args._.join(" "),
       tags: args.tags ? String(args.tags).split(",").map((t) => t.trim()).filter(Boolean) : [],
       limit: args.limit ? Number(args.limit) : undefined,
@@ -85,7 +113,7 @@ switch (command) {
   case "supersede":
   case "deprecate": {
     if (!args.ids || !args.reason) fail("--ids and --reason are required");
-    const result = core.callTool("lessons_supersede", {
+    const result = await core.callTool("lessons_supersede", {
       ids: String(args.ids).split(",").map((s) => s.trim()).filter(Boolean),
       supersededBy: args["superseded-by"] ? String(args["superseded-by"]) : undefined,
       status: command === "deprecate" ? "deprecated" : "superseded",
@@ -198,7 +226,7 @@ switch (command) {
       break;
     }
     for (const plan of plans) {
-      core.callTool("lessons_supersede", { ids: [plan.retire], supersededBy: plan.keeper, reason: "exact-duplicate-content (muphys dedupe)" });
+      await core.callTool("lessons_supersede", { ids: [plan.retire], supersededBy: plan.keeper, reason: "exact-duplicate-content (muphys dedupe)" });
     }
     out({ retired: plans.length, reviewCandidates: candidates });
     break;
@@ -371,6 +399,15 @@ switch (command) {
     break;
   }
 
+  case "mcp": {
+    // Host the stdio MCP server through the CLI so `npx -y muphys-law mcp`
+    // is a complete mount command — no clone, no path to the lib file.
+    core.startMcpServer();
+    // The server owns the process from here; it exits on stdin EOF.
+    await new Promise(() => {});
+    break;
+  }
+
   case "doctor": {
     // Integrity + liveness. Fail-open components (the hook) are silent when
     // broken — this is the external assertion that catches that.
@@ -408,6 +445,18 @@ switch (command) {
         issues.push(`superseded_by points at a retired lesson: ${lesson.id} -> ${lesson.superseded_by} (chains/cycles; re-point at the active replacement)`);
       }
     }
+    // Outcome telemetry finally feeds curation: an ACTIVE lesson that keeps
+    // failing when applied is stale guidance wearing the authority of the
+    // system — exactly what supersession exists for.
+    const { perLesson } = outcomeRollup();
+    for (const lesson of rows) {
+      if (lesson.status === "superseded" || lesson.status === "deprecated") continue;
+      const bucket = perLesson.get(lesson.id);
+      if (!bucket) continue;
+      if (bucket.failed >= 2 && bucket.failed > bucket.worked) {
+        issues.push(`lesson ${lesson.id} keeps failing when applied (${bucket.failed} failed vs ${bucket.worked} worked across ${bucket.applies} applies) — review for supersession`);
+      }
+    }
     for (const name of ["readRegister", "scoreLessonForQuery", "normalizeSearchText", "callTool"]) {
       if (typeof core[name] !== "function") issues.push(`runtime missing export ${name} — wrong or stale checkout?`);
     }
@@ -441,14 +490,42 @@ switch (command) {
 
   case "stats": {
     const count = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).length : 0);
-    out({
+    const injectionLog = path.resolve(process.env.MUPHYS_INJECTION_LOG || path.join(core.MUPHYS_HOME, "injections.jsonl"));
+    const { totals, perLesson } = outcomeRollup();
+    const result = {
       home: core.MUPHYS_HOME,
       register: { total: core.readRegister().length, active: core.activeLessons().length },
       queries: count(core.QUERIES_JSONL),
       applications: count(core.USAGE_JSONL),
       candidates: count(core.CANDIDATES_JSONL),
-      injections: count(path.resolve(process.env.MUPHYS_INJECTION_LOG || path.join(core.MUPHYS_HOME, "injections.jsonl"))),
-    });
+      injections: count(injectionLog),
+      outcomes: totals,
+    };
+    if (args["by-lesson"] === true) {
+      // Injection counts per lesson, joined with apply outcomes: the funnel
+      // (deliver -> apply -> outcome) as one table per lesson.
+      const injectedByLesson = new Map();
+      if (fs.existsSync(injectionLog)) {
+        for (const line of fs.readFileSync(injectionLog, "utf8").split("\n")) {
+          if (!line.trim()) continue;
+          let row;
+          try { row = JSON.parse(line); } catch { continue; }
+          for (const hit of Array.isArray(row.lessons) ? row.lessons : []) {
+            if (hit && typeof hit.id === "string") injectedByLesson.set(hit.id, (injectedByLesson.get(hit.id) || 0) + 1);
+          }
+        }
+      }
+      const titles = new Map(core.readRegister().map((l) => [l.id, { title: l.title || null, status: l.status || "active" }]));
+      const ids = new Set([...perLesson.keys(), ...injectedByLesson.keys()]);
+      result.byLesson = [...ids].map((id) => ({
+        id,
+        title: titles.get(id)?.title ?? null,
+        status: titles.get(id)?.status ?? "unknown-id",
+        injections: injectedByLesson.get(id) || 0,
+        ...(perLesson.get(id) || { applies: 0, worked: 0, partial: 0, failed: 0, unknown: 0, unspecified: 0 }),
+      })).sort((a, b) => (b.applies - a.applies) || (b.injections - a.injections) || String(a.id).localeCompare(String(b.id)));
+    }
+    out(result);
     break;
   }
 

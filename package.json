@@ -14,7 +14,8 @@
   },
   "type": "module",
   "bin": {
-    "muphys": "bin/muphys.mjs"
+    "muphys": "bin/muphys.mjs",
+    "muphys-law": "bin/muphys.mjs"
   },
   "files": [
     "bin/",

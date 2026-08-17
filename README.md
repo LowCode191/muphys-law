@@ -45,9 +45,11 @@ data licenses:
   of the lessons. If your agents are newer than ours, expect more headroom;
   we can't prove it from our data.
 - **Known weak link: retrieval.** The built-in scorer is lexical; on our
-  golden set its paraphrase recall was poor (hybrid top-1 ≈ 0.5). The push
-  hook compensates by scoring full prompts rather than short queries, but if
-  you improve one thing, improve retrieval — and re-run the eval.
+  golden set its paraphrase recall was poor. The push hook compensates by
+  scoring full prompts rather than short queries. An optional embedding
+  backend now exists (below) — in our bakeoff embeddings doubled lexical's
+  should-have-fired recall (0.57 vs 0.29) — but if you improve one thing,
+  improve retrieval further, and re-run the eval.
 
 ## Quickstart (5 minutes)
 
@@ -97,7 +99,13 @@ guard that only read files back. `muphys doctor` checks this.
 ### The MCP server (pull-side tools for any MCP harness)
 
 ```bash
-node lib/register.cjs     # stdio MCP server
+npx -y muphys-law mcp     # stdio MCP server, no clone needed
+```
+
+Or from a clone: `node lib/register.cjs`. Typical client config:
+
+```json
+{ "mcpServers": { "muphys": { "command": "npx", "args": ["-y", "muphys-law", "mcp"] } } }
 ```
 
 Tools: `lessons_query`, `lessons_apply` (with an `outcome` field —
@@ -106,6 +114,40 @@ declared), `lessons_candidate` (curation intake), `lessons_supersede`
 (curator-only retirement). Fair warning from our telemetry: pull-based
 discipline alone fails — our primary agent called `lessons_query` once in
 433 sessions despite a "required" instruction. Ship the hook.
+
+### Optional embedding retrieval (hybrid ranking)
+
+`lessons_query` can blend embedding similarity into its lexical ranks. Point
+it at any OpenAI-compatible embeddings endpoint (Ollama works):
+
+```bash
+export MUPHYS_EMBEDDINGS_URL=http://localhost:11434/v1/embeddings
+export MUPHYS_EMBEDDINGS_MODEL=nomic-embed-text
+# optional: MUPHYS_EMBEDDINGS_API_KEY, MUPHYS_EMBEDDINGS_TIMEOUT_MS (default 4000)
+```
+
+Unset = pure lexical, exactly as before. Design constraints, in order:
+**fail-open** (any backend error or timeout falls back to lexical ranks and
+records why in the query log — retrieval must never make the register
+unavailable); **cached** (vectors persist per-model in
+`~/.muphys/embeddings-cache.jsonl`, so the register embeds once, not per
+query); and **the hook stays lexical-only by design** — the prompt path never
+waits on a network call. Every query-log row now records which retriever
+answered (`retriever: lexical|hybrid`), so you can measure the difference on
+your own traffic.
+
+### Outcome analytics (closing the funnel)
+
+The `outcome` field on `lessons_apply` finally feeds back into curation:
+
+```bash
+node bin/muphys.mjs stats --by-lesson   # per-lesson injections + applies + outcomes
+node bin/muphys.mjs doctor              # flags ACTIVE lessons that keep failing when applied
+```
+
+A lesson with repeated `failed` outcomes and no `worked` wins is stale
+guidance wearing the authority of the system — doctor names it and tells you
+to review it for supersession.
 
 ### Beyond Claude Code (Codex, Cursor, Gemini CLI, your own harness)
 

@@ -42,17 +42,17 @@ before(() => {
   ] }), { author: "test" });
 });
 
-test("supersede refuses a retired replacement (cycles unrepresentable)", () => {
+test("supersede refuses a retired replacement (cycles unrepresentable)", async () => {
   const [a, b] = core.readRegister();
-  core.callTool("lessons_supersede", { ids: [a.id], supersededBy: b.id, reason: "v2 wins" });
+  await core.callTool("lessons_supersede", { ids: [a.id], supersededBy: b.id, reason: "v2 wins" });
   // b now active, a retired. Retiring b toward a must fail: a is retired.
-  assert.throws(
+  await assert.rejects(
     () => core.callTool("lessons_supersede", { ids: [b.id], supersededBy: a.id, reason: "cycle attempt" }),
     /must be an ACTIVE lesson/,
   );
 });
 
-test("dedupe never groups non-Latin lessons on empty fold keys", () => {
+test("dedupe never groups non-Latin lessons on empty fold keys", async () => {
   const { retire, review } = dedupePlan();
   for (const surface of [retire, review]) assert.ok(!/日本語|한국어/.test(surface), "distinct non-Latin lessons must not surface in either dedupe tier");
   const rows = core.readRegister();
@@ -61,7 +61,7 @@ test("dedupe never groups non-Latin lessons on empty fold keys", () => {
   for (const row of nonLatin) assert.notEqual(row.status, "superseded");
 });
 
-test("sync respects a held lock and appends nothing", () => {
+test("sync respects a held lock and appends nothing", async () => {
   fs.writeFileSync(path.join(HOME, "projects.json"), JSON.stringify({ projects: [{ slug: "demo", root: HOME }] }));
   fs.writeFileSync(path.join(HOME, "LESSONS-LEARNED.jsonl"), JSON.stringify({ title: "Sync lesson", description: "A lesson captured at the project." }) + "\n");
   fs.writeFileSync(path.join(HOME, ".sync.lock"), JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }));
@@ -77,7 +77,7 @@ test("sync respects a held lock and appends nothing", () => {
   assert.equal(applied.totalAppended, 1, "sync proceeds once the lock is free");
 });
 
-test("invalid cwd-filter regex exits 0, stays silent, never blocks the prompt", () => {
+test("invalid cwd-filter regex exits 0, stays silent, never blocks the prompt", async () => {
   const out = execFileSync("node", [HOOK], {
     input: JSON.stringify({ session_id: "rex", cwd: "/tmp", prompt: "update the alpha guidance rule for the fleet so the second better version applies everywhere" }),
     env: { ...process.env, MUPHYS_HOME: HOME, MUPHYS_HOOK_CWD_FILTER: "([unclosed" },
@@ -86,7 +86,7 @@ test("invalid cwd-filter regex exits 0, stays silent, never blocks the prompt", 
   assert.equal(out, "");
 });
 
-test("malformed hook state degrades to sane defaults, not a reset cap or crash", () => {
+test("malformed hook state degrades to sane defaults, not a reset cap or crash", async () => {
   const stateDir = path.join(HOME, "hook-state");
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(path.join(stateDir, "clamp.json"), '{"injectedIds": "not-an-array", "injectionEvents": "NaN-ish"}');
@@ -101,7 +101,7 @@ test("malformed hook state degrades to sane defaults, not a reset cap or crash",
   assert.equal(state.injectionEvents, 1);
 });
 
-test("literal JSON null state (valid JSON!) still recalls — never silently disables", () => {
+test("literal JSON null state (valid JSON!) still recalls — never silently disables", async () => {
   const stateDir = path.join(HOME, "hook-state");
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(path.join(stateDir, "nullstate.json"), "null");
@@ -113,7 +113,7 @@ test("literal JSON null state (valid JSON!) still recalls — never silently dis
   assert.match(out, /<lessons-recall>/);
 });
 
-test("dedupe: mixed-language lessons sharing ASCII tokens are NOT conflated", () => {
+test("dedupe: mixed-language lessons sharing ASCII tokens are NOT conflated", async () => {
   const pair = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "API 本番環境では必ずバックアップを取る production", description: "本番環境の API を変更する前にバックアップ。production の教訓。" },
     { title: "API レート制限は指数バックオフで処理する production", description: "API のレート制限エラーは指数バックオフ。production の別の教訓。" },
@@ -125,7 +125,7 @@ test("dedupe: mixed-language lessons sharing ASCII tokens are NOT conflated", ()
   }
 });
 
-test("dedupe: exact non-Latin duplicates ARE grouped (byte-identical tier)", () => {
+test("dedupe: exact non-Latin duplicates ARE grouped (byte-identical tier)", async () => {
   const dupes = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "重複した教訓のタイトル", description: "全く同じ説明文です。" },
     { title: "重複した教訓のタイトル", description: "全く同じ説明文です。" },
@@ -166,7 +166,7 @@ test("sync: concurrent runs against a STALE lock never write duplicate ids", asy
   assert.equal(stats.register.total, 2, "the reader collapses any raced duplicate line to exactly one lesson");
 });
 
-test("dedupe fold preserves combining marks: Devanagari क and कि never collide", () => {
+test("dedupe fold preserves combining marks: Devanagari क and कि never collide", async () => {
   const pair = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "क के बारे में सबक", description: "पहला सबक क अक्षर के बारे में है।" },
     { title: "कि के बारे में सबक", description: "पहला सबक कि अक्षर के बारे में है।" },
@@ -178,7 +178,7 @@ test("dedupe fold preserves combining marks: Devanagari क and कि never col
   }
 });
 
-test("round 7: NFC canonical forms are review candidates, never auto-retired", () => {
+test("round 7: NFC canonical forms are review candidates, never auto-retired", async () => {
   // Canonically equivalent ≠ byte-identical: a lesson quoting the literal
   // decomposed e+combining-acute sequence is a different instruction than
   // one quoting precomposed é. The fold (which NFC-normalizes) surfaces the
@@ -196,7 +196,7 @@ test("round 7: NFC canonical forms are review candidates, never auto-retired", (
   assert.ok(dupes.every((record) => review.includes(record.id)), "canonical-form variants must surface together for curator review");
 });
 
-test("dedupe never merges emoji-distinguished lessons (✅ vs ❌ are opposites)", () => {
+test("dedupe never merges emoji-distinguished lessons (✅ vs ❌ are opposites)", async () => {
   const pair = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "deploy check ✅ before restart", description: "Run the deploy check ✅ before any restart of the service." },
     { title: "deploy check ❌ before restart", description: "Run the deploy check ❌ before any restart of the service." },
@@ -208,7 +208,7 @@ test("dedupe never merges emoji-distinguished lessons (✅ vs ❌ are opposites)
   }
 });
 
-test("dedupe treats case variants as DISTINCT (locale-safe by design: IŞIK ≠ ışık)", () => {
+test("dedupe treats case variants as DISTINCT (locale-safe by design: IŞIK ≠ ışık)", async () => {
   const pair = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "IŞIK KONTROL YAP KURALI", description: "BÜYÜK HARFLİ DERS METNİ BURADA." },
     { title: "ışık kontrol yap kuralı", description: "büyük harfli ders metni burada.".toLowerCase() },
@@ -220,7 +220,7 @@ test("dedupe treats case variants as DISTINCT (locale-safe by design: IŞIK ≠ 
   }
 });
 
-test("round 7: typographic quote/dash variants are review candidates, never auto-retired", () => {
+test("round 7: typographic quote/dash variants are review candidates, never auto-retired", async () => {
   // The original backfill class this command was built for — but a lesson can
   // be ABOUT an exact character („ vs "), so the typographic map is lossy and
   // lossy never gates destruction. The curator sees the pair and decides.
@@ -233,7 +233,7 @@ test("round 7: typographic quote/dash variants are review candidates, never auto
   assert.ok(dupes.every((record) => review.includes(record.id)), "typographic-variant copies must surface together for curator review");
 });
 
-test("dedupe: a dash glued to the last token is content, not separator noise (A- ≠ A)", () => {
+test("dedupe: a dash glued to the last token is content, not separator noise (A- ≠ A)", async () => {
   const pair = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "service tier is A-", description: "The service tier grade here is A- for this quarter." },
     { title: "service tier is A", description: "The service tier grade here is A for this quarter." },
@@ -245,7 +245,7 @@ test("dedupe: a dash glued to the last token is content, not separator noise (A-
   }
 });
 
-test("round 7: separator-dash variants are review candidates, never auto-retired", () => {
+test("round 7: separator-dash variants are review candidates, never auto-retired", async () => {
   // A trailing "—" is usually decoration — but "Required delimiter is —" is a
   // lesson ABOUT a terminal dash, and no trim can tell those apart. Report,
   // never retire.
@@ -263,7 +263,7 @@ test("round 7: separator-dash variants are review candidates, never auto-retired
 // destructive path — proven under a real --apply, not a dry run.
 // ---------------------------------------------------------------------------
 
-test("round 7: --apply retires only byte-identical duplicates; every semantic near-match survives", () => {
+test("round 7: --apply retires only byte-identical duplicates; every semantic near-match survives", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r7-"));
   const seed = [
     // (1) composite-key delimiter injection
@@ -320,7 +320,7 @@ test("round 7: --apply retires only byte-identical duplicates; every semantic ne
   assert.ok(!review.includes("True duplicate"), "NFC-exact groups belong to the retire plan, not the review list");
 });
 
-test("round 7: sync content ids are delimiter-proof (a|b + c ≠ a + b|c)", () => {
+test("round 7: sync content ids are delimiter-proof (a|b + c ≠ a + b|c)", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r7sync-"));
   fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({ projects: [{ slug: "inj", root: home }] }));
   fs.writeFileSync(path.join(home, "LESSONS-LEARNED.jsonl"),
@@ -332,7 +332,7 @@ test("round 7: sync content ids are delimiter-proof (a|b + c ≠ a + b|c)", () =
   assert.notEqual(rows[0].id, rows[1].id, "structural tuple hash gives distinct ids");
 });
 
-test("round 7.2: non-string content is never judged — coercion is a lossy transform", () => {
+test("round 7.2: non-string content is never judged — coercion is a lossy transform", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r72-"));
   // Out-of-contract rows appended directly to the file, as a legacy migration
   // or manual edit could: no writer in this package produces these.
@@ -352,7 +352,7 @@ test("round 7.2: non-string content is never judged — coercion is a lossy tran
   assert.ok(after.every((r) => r.status === "active"), "no row was retired");
 });
 
-test("round 7.2: candidates reflect the post-plan register and carry usable member objects", () => {
+test("round 7.2: candidates reflect the post-plan register and carry usable member objects", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r72c-"));
   const env = { ...process.env, MUPHYS_HOME: home };
   // A and A2 are byte-identical (one will retire); B is fold-equal only.
@@ -374,7 +374,7 @@ test("round 7.2: candidates reflect the post-plan register and carry usable memb
   }
 });
 
-test("round 7.3: reader collapses duplicate-id lines (first wins) and dedupe never self-retires them", () => {
+test("round 7.3: reader collapses duplicate-id lines (first wins) and dedupe never self-retires them", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r73-"));
   const rowX = JSON.stringify({ id: "llp-dupline00001", title: "Synced lesson", description: "Body of the synced lesson.", status: "active" });
   const rowY = JSON.stringify({ id: "llg-distinct0001", title: "Other lesson", description: "A different body entirely.", status: "active" });
@@ -389,7 +389,7 @@ test("round 7.3: reader collapses duplicate-id lines (first wins) and dedupe nev
   assert.equal(doctor.ok, true, "byte-identical duplicate lines are a benign, reported artifact");
 });
 
-test("round 7.3: divergent same-id lines are a doctor issue — the reader is masking data", () => {
+test("round 7.3: divergent same-id lines are a doctor issue — the reader is masking data", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r73d-"));
   const first = JSON.stringify({ id: "llg-divergent001", title: "First version", description: "The first body.", status: "active" });
   const second = JSON.stringify({ id: "llg-divergent001", title: "Second version", description: "A conflicting body.", status: "active" });
@@ -410,7 +410,7 @@ test("round 7.3: divergent same-id lines are a doctor issue — the reader is ma
   assert.ok(doctor.issues.some((i) => i.includes("llg-divergent001")), "the divergent id is named");
 });
 
-test("round 7.4: sync rows are pure functions of source content — two syncs, byte-identical registers", () => {
+test("round 7.4: sync rows are pure functions of source content — two syncs, byte-identical registers", async () => {
   const source = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74src-"));
   fs.writeFileSync(path.join(source, "LESSONS-LEARNED.jsonl"),
     JSON.stringify({ title: "Dated lesson", description: "Has a source date.", date: "2026-03-04" }) + "\n" +
@@ -431,7 +431,7 @@ test("round 7.4: sync rows are pure functions of source content — two syncs, b
   assert.ok(!("synced_at" in dated) && !("synced_at" in undated), "no wall clock rides in a durable row");
 });
 
-test("round 7.4: a live foreign lock is respected AND survives the run — no blind unlock", () => {
+test("round 7.4: a live foreign lock is respected AND survives the run — no blind unlock", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74lock-"));
   fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({ projects: [{ slug: "lk", root: home }] }));
   fs.writeFileSync(path.join(home, "LESSONS-LEARNED.jsonl"),
@@ -446,7 +446,7 @@ test("round 7.4: a live foreign lock is respected AND survives the run — no bl
   assert.equal(fs.readFileSync(lockPath, "utf8"), foreign, "the foreign lock survives byte-for-byte — release only ever removes a lock naming the releaser's own pid");
 });
 
-test("round 7.4: doctor's liveness alarm is scoped to THIS install's hook path", () => {
+test("round 7.4: doctor's liveness alarm is scoped to THIS install's hook path", async () => {
   const hookPath = path.join(HERE, "..", "hooks", "lessons-recall-hook.mjs");
   // Foreign checkout mounted (same basename, different path): no alarm.
   const homeForeign = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74docf-"));
