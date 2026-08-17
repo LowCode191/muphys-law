@@ -318,3 +318,52 @@ test("malformed JSON lines get a spec-compliant -32700, valid requests still ans
   assert.equal(parseError.id, null);
   assert.ok(lines.find((l) => l.id === 7 && l.result), "valid requests after garbage still answered");
 });
+
+// ---------------------------------------------------------------------------
+// Round 2: validate what you transformed; persist what you constructed.
+// ---------------------------------------------------------------------------
+
+test("round 2: a vector that overflows during cache quantization fails open and is never cached", async () => {
+  // 1e308 is finite at fetch-time validation; quantization (x*1e5) overflows
+  // it to Infinity — the transformed vector must be re-validated.
+  const { server, port } = await startFakeEmbeddings(() => [1e308, 0.5, 0.5]);
+  try {
+    const home = freshHome("muphys-r2quant-");
+    seedRegister(home, [{ id: "llg-quantlesson", title: "Confirm the fix is live in production", description: "verified live in production", status: "active" }]);
+    const env = { ...process.env, MUPHYS_HOME: home, MUPHYS_EMBEDDINGS_URL: `http://127.0.0.1:${port}/v1/embeddings`, MUPHYS_EMBEDDINGS_MODEL: "quant-model" };
+    const result = JSON.parse(await runCli(["query", PARAPHRASE], env));
+    assert.equal(result.retriever, "lexical", "post-quantization Infinity must fail the pass open");
+    assert.ok(!fs.existsSync(path.join(home, "embeddings-cache.jsonl")), "the overflowed vector must never be cached");
+  } finally {
+    server.close();
+  }
+});
+
+test("round 2: persisted embeddings errors are constructed categories, never exception text", async () => {
+  const cases = [
+    { url: "mailto:secretmarkerA@example.com", markers: ["secretmarkerA"] },
+    { url: "http://127.0.0.1:1/v1/e?key=marker%2DsecretB", markers: ["marker%2DsecretB", "secretB"] },
+  ];
+  const categories = new Set(["timeout", "bad-response", "invalid-vector", "dimension-mismatch", "backend-error", "connect-failure"]);
+  for (const c of cases) {
+    const home = freshHome("muphys-r2cat-");
+    seedRegister(home, [{ id: "llg-catlesson01", title: "Confirm the fix is live in production", description: "verified live in production", status: "active" }]);
+    const env = { ...process.env, MUPHYS_HOME: home, MUPHYS_EMBEDDINGS_URL: c.url, MUPHYS_EMBEDDINGS_MODEL: "cat-model", MUPHYS_EMBEDDINGS_TIMEOUT_MS: "600" };
+    const result = JSON.parse(await runCli(["query", PARAPHRASE], env));
+    assert.equal(result.retriever, "lexical");
+    const log = fs.readFileSync(path.join(home, "queries.jsonl"), "utf8");
+    for (const marker of c.markers) assert.ok(!log.includes(marker), `marker ${marker} must never persist`);
+    const row = JSON.parse(log.trim().split("\n").pop());
+    assert.ok(categories.has(row.embeddingsError) || String(row.embeddingsError).startsWith("embeddings endpoint HTTP "), `persisted value must be a constructed category, got: ${row.embeddingsError}`);
+  }
+});
+
+test("round 2: non-string lesson ids are dropped at the apply boundary, never coerced", async () => {
+  const home = freshHome("muphys-r2coerce-");
+  const env = { ...process.env, MUPHYS_HOME: home };
+  const out = await runNode(`
+    const core = require(${JSON.stringify(path.join(HERE, "..", "lib", "register.cjs"))});
+    core.callTool("lessons_apply", { lessonIds: [1, "llg-realid0001", null, "llg-realid0001"], task: "t", dryRun: true }).then((r) => { console.log(JSON.stringify(r.entry.lessonIds)); process.exit(0); });
+  `, env);
+  assert.deepEqual(JSON.parse(out.trim()), ["llg-realid0001"], "numeric 1 dropped (not stringified), null dropped, dup deduped");
+});
