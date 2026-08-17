@@ -319,3 +319,45 @@ test("round 7: sync content ids are delimiter-proof (a|b + c ≠ a + b|c)", () =
   assert.equal(rows.length, 2, "both pipe-shifted lessons land — neither is swallowed as the other's duplicate");
   assert.notEqual(rows[0].id, rows[1].id, "structural tuple hash gives distinct ids");
 });
+
+test("round 7.2: non-string content is never judged — coercion is a lossy transform", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r72-"));
+  // Out-of-contract rows appended directly to the file, as a legacy migration
+  // or manual edit could: no writer in this package produces these.
+  const rows = [
+    { id: "llg-objtitle0001", title: { a: 1 }, description: "same body", status: "active" },
+    { id: "llg-objtitle0002", title: { b: 2 }, description: "same body", status: "active" },
+    { id: "llg-numtitle0001", title: 42, description: "answer body", status: "active" },
+    { id: "llg-strtitle0001", title: "42", description: "answer body", status: "active" },
+  ];
+  fs.writeFileSync(path.join(home, "lessons.jsonl"), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const result = JSON.parse(execFileSync("node", [CLI, "dedupe", "--apply"],
+    { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" }));
+  assert.equal(result.retired, 0, "coerced collisions ({a:1}/{b:2} -> [object Object], 42 -> \"42\") must never retire");
+  const surfaces = JSON.stringify(result);
+  for (const r of rows) assert.ok(!surfaces.includes(r.id), `out-of-contract row ${r.id} must appear in neither tier`);
+  const after = fs.readFileSync(path.join(home, "lessons.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.ok(after.every((r) => r.status === "active"), "no row was retired");
+});
+
+test("round 7.2: candidates reflect the post-plan register and carry usable member objects", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r72c-"));
+  const env = { ...process.env, MUPHYS_HOME: home };
+  // A and A2 are byte-identical (one will retire); B is fold-equal only.
+  execFileSync("node", [CLI, "add", "--title", "Restart rule —", "--description", "Drain before restart.", "--date", "2026-01-01"], { env, encoding: "utf8" });
+  execFileSync("node", [CLI, "add", "--title", "Restart rule —", "--description", "Drain before restart.", "--date", "2026-02-01"], { env, encoding: "utf8" });
+  execFileSync("node", [CLI, "add", "--title", "Restart rule", "--description", "Drain before restart.", "--date", "2026-03-01"], { env, encoding: "utf8" });
+  const result = JSON.parse(execFileSync("node", [CLI, "dedupe", "--apply"], { env, encoding: "utf8" }));
+  assert.equal(result.retired, 1, "the byte-identical pair retires exactly one row");
+  const after = fs.readFileSync(path.join(home, "lessons.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const retired = after.find((r) => r.status === "superseded");
+  assert.equal(result.reviewCandidates.length, 1, "keeper + fold-equal sibling remain a review group");
+  const group = result.reviewCandidates[0];
+  assert.ok(!group.ids.includes(retired.id), "a just-retired row must not be re-listed for curator review");
+  assert.equal(group.members.length, 2);
+  for (const member of group.members) {
+    assert.equal(typeof member.id, "string");
+    assert.equal(typeof member.title, "string");
+    assert.equal(typeof member.description, "string", "description-only variants are indistinguishable without descriptions");
+  }
+});

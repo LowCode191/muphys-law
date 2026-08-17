@@ -124,7 +124,15 @@ switch (command) {
     //     for a curator to judge and supersede manually. Missed-or-deferred
     //     merge is the cheap error; a false auto-retire is the expensive
     //     one.
-    const exactKey = (lesson) => JSON.stringify([String(lesson.title || ""), String(lesson.description || "")]);
+    // Only string-typed, non-empty content is ever judged — in EITHER tier.
+    // readRegister admits any parsed JSON row (the file is append-only and
+    // tolerates legacy/manual appends), and String() coercion is itself a
+    // lossy transform: {a:1} and {b:2} both become "[object Object]", and 42
+    // collides with "42". Rows that fail the guard are skipped, never coerced.
+    const judgeable = (lesson) =>
+      typeof lesson.title === "string" && lesson.title.length > 0 &&
+      typeof lesson.description === "string" && lesson.description.length > 0;
+    const exactKey = (lesson) => JSON.stringify([lesson.title, lesson.description]);
     const TYPOGRAPHIC = new Map(Object.entries({
       "‘": "'", "’": "'", "‚": "'", "‛": "'",
       "“": '"', "”": '"', "„": '"', "‟": '"',
@@ -144,7 +152,7 @@ switch (command) {
 
     const exactGroups = new Map();
     for (const lesson of active) {
-      if (!String(lesson.title || "") || !String(lesson.description || "")) continue; // never judge on empty content
+      if (!judgeable(lesson)) continue;
       const key = exactKey(lesson);
       if (!exactGroups.has(key)) exactGroups.set(key, []);
       exactGroups.get(key).push(lesson);
@@ -160,6 +168,7 @@ switch (command) {
 
     const foldGroups = new Map();
     for (const lesson of active) {
+      if (!judgeable(lesson)) continue;
       const foldedTitle = fold(lesson.title);
       const foldedDescription = fold(lesson.description);
       if (!foldedTitle || !foldedDescription) continue; // emoji-only etc: never judge on empty keys
@@ -167,14 +176,21 @@ switch (command) {
       if (!foldGroups.has(key)) foldGroups.set(key, []);
       foldGroups.get(key).push(lesson);
     }
+    // Candidates reflect the POST-plan register: a member the retire plan is
+    // about to remove must not be re-listed for curator review. Same explicit
+    // truncation marker as lessons_query — a candidate row is curator UI, and
+    // description-only variants are indistinguishable without descriptions.
+    const retiring = new Set(plans.map((plan) => plan.retire));
+    const preview = (d) => (d.length > 240 ? d.slice(0, 240) + " …[truncated]" : d);
     const candidates = [];
-    for (const members of foldGroups.values()) {
+    for (const grouped of foldGroups.values()) {
+      const members = grouped.filter((m) => !retiring.has(m.id));
       if (members.length < 2) continue;
       // Groups that are entirely byte-identical already live in the
       // auto-retire plan; a candidate group must contain at least two
       // DISTINCT contents.
       if (new Set(members.map(exactKey)).size < 2) continue;
-      candidates.push({ ids: members.map((m) => m.id), titles: members.map((m) => m.title) });
+      candidates.push({ ids: members.map((m) => m.id), members: members.map((m) => ({ id: m.id, title: m.title, description: preview(m.description) })) });
     }
 
     if (args.apply !== true) {
