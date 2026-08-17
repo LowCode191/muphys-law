@@ -163,3 +163,30 @@ test("dedupe fold NFC-normalizes: precomposed and decomposed forms of the same t
   const planned = JSON.stringify(plan.wouldRetire || []);
   assert.ok(dupes.some((record) => planned.includes(record.id)), "same text in different normalization forms must be dedupe candidates");
 });
+
+test("dedupe never merges emoji-distinguished lessons (✅ vs ❌ are opposites)", () => {
+  const pair = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: "deploy check ✅ before restart", description: "Run the deploy check ✅ before any restart of the service." },
+    { title: "deploy check ❌ before restart", description: "Run the deploy check ❌ before any restart of the service." },
+  ] }), { author: "test" });
+  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
+  for (const record of pair) assert.ok(!planned.includes(record.id), "emoji-distinguished lessons must never be dedupe candidates");
+});
+
+test("dedupe treats case variants as DISTINCT (locale-safe by design: IŞIK ≠ ışık)", () => {
+  const pair = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: "IŞIK KONTROL YAP KURALI", description: "BÜYÜK HARFLİ DERS METNİ BURADA." },
+    { title: "ışık kontrol yap kuralı", description: "büyük harfli ders metni burada.".toLowerCase() },
+  ] }), { author: "test" });
+  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
+  for (const record of pair) assert.ok(!planned.includes(record.id), "case variants must never be dedupe candidates (Turkish casing is unfixable by folding)");
+});
+
+test("dedupe still groups the original backfill class: typographic quote/dash variants", () => {
+  const dupes = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: "Don't pipe ‘sensitive’ output — mask it", description: "The rule… applies to “every” pipeline — always." },
+    { title: "Don't pipe 'sensitive' output - mask it", description: "The rule... applies to \"every\" pipeline - always." },
+  ] }), { author: "test" });
+  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
+  assert.ok(dupes.some((record) => planned.includes(record.id)), "typographic-variant copies of the same lesson must group");
+});

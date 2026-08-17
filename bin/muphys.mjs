@@ -99,17 +99,38 @@ switch (command) {
   case "dedupe": {
     // Exact content duplicates only (punctuation-folded title+description
     // equality). Anything less identical is a curator judgment call.
-    // Dedupe equality gets its OWN fold, and because --apply is destructive
-    // the fold must preserve every distinction that makes two lessons
-    // different text. Three input classes have bitten here, each caught by
-    // adversarial review: (1) an ASCII-only fold conflated distinct
-    // non-English lessons; (2) \p{L}\p{N} alone strips combining marks
-    // (category \p{M}), colliding Devanagari क with कि and breaking every
-    // abugida and mark-bearing script; (3) without NFC, precomposed and
-    // decomposed forms of the SAME text fold differently. So: NFC-normalize,
-    // then keep letters, numbers AND marks — only case, whitespace and
-    // punctuation are folded away.
-    const fold = (t) => String(t || "").normalize("NFC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim();
+    // Dedupe equality is DESTRUCTIVE under --apply, and four review rounds
+    // proved a lesson about lossy folds: every character class we stripped
+    // created a new false-merge that retired a genuinely distinct lesson —
+    // ASCII-only folding ate non-Latin text, \p{L}\p{N} ate combining marks
+    // (क vs कि), adding \p{M} still ate symbols (a ✅-lesson merged with its
+    // ❌-opposite), and locale-blind toLowerCase corrupts Turkish in BOTH
+    // directions with no regex fix possible.
+    //
+    // So the fold strips NOTHING semantic. It applies only equivalences that
+    // cannot distinguish two real lessons:
+    //   - NFC canonical normalization (precomposed ≡ decomposed, by Unicode's
+    //     own definition of "same text")
+    //   - typographic quote/dash/ellipsis variants → their plain forms (the
+    //     original backfill-duplicate class this command exists for)
+    //   - whitespace runs → single space; trailing separator-dash runs dropped
+    //
+    // Deliberately NOT folded: case (locale-dependent — case-variant copies
+    // are treated as distinct; a curator can supersede them manually, which
+    // is the cheap direction of error) and every letter/mark/symbol/emoji.
+    const TYPOGRAPHIC = new Map(Object.entries({
+      "‘": "'", "’": "'", "‚": "'", "‛": "'",
+      "“": '"', "”": '"', "„": '"', "‟": '"',
+      "–": "-", "—": "-", "‒": "-", "―": "-",
+      "…": "...",
+      " ": " ",
+    }));
+    const fold = (t) => String(t || "")
+      .normalize("NFC")
+      .replace(/[‘’‚‛“”„‟–—‒―… ]/g, (ch) => TYPOGRAPHIC.get(ch) ?? ch)
+      .replace(/\s+/g, " ")
+      .replace(/[\s-]+$/, "")
+      .trim();
     const rows = core.readRegister();
     const groups = new Map();
     for (const lesson of rows) {

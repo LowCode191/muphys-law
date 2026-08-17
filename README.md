@@ -53,7 +53,7 @@ data licenses:
 
 ```bash
 git clone <this repo> && cd muphys-law
-npm test                                  # 26 tests, no dependencies
+npm test                                  # zero dependencies
 
 # seed a register with the sample lessons
 mkdir -p ~/.muphys && cp data/sample-lessons.jsonl ~/.muphys/lessons.jsonl

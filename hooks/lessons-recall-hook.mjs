@@ -200,11 +200,13 @@ function main() {
     for (const { lesson } of fresh) seen.add(lesson.id);
     // Atomic write: a concurrent hook run must never read a torn state file.
     // KNOWN BOUND, deliberately unlocked: concurrent prompts in the same
-    // session race this read-modify-write last-writer-wins, so duplicate
-    // injections and cap drift are proportional to the number of concurrent
-    // invocations (up to N−1 dupes across N racers; the session cap still
-    // bounds total volume). Accepted: a lock here would put a failure mode
-    // on the prompt path, which is never worth it.
+    // session race this read-modify-write last-writer-wins. Within one
+    // concurrent burst the cap gate reads pre-race state, so an N-way burst
+    // can emit up to N injections regardless of the cap; the cap bounds the
+    // PERSISTED counter and therefore steady-state behavior between bursts,
+    // not emissions inside a burst. Accepted: real sessions are serial in
+    // the overwhelming case, and a lock here would put a failure mode on
+    // the prompt path, which is never worth it.
     const tmpPath = `${statePath}.${process.pid}.tmp`;
     fs.writeFileSync(tmpPath, JSON.stringify({ arm, injectedIds: [...seen].slice(-100), injectionEvents: (state.injectionEvents || 0) + 1 }), { mode: 0o600 });
     fs.renameSync(tmpPath, statePath);
