@@ -99,17 +99,20 @@ switch (command) {
   case "dedupe": {
     // Exact content duplicates only (punctuation-folded title+description
     // equality). Anything less identical is a curator judgment call.
-    const fold = (t) => core.normalizeSearchText(t);
+    // Dedupe equality gets its OWN fold, and it must be lossless across
+    // scripts: the scorer's ASCII fold discards non-Latin text, so two
+    // distinct Japanese lessons sharing a couple of ASCII tokens would fold
+    // to the same key and --apply would retire a genuinely distinct lesson.
+    // Unicode property classes keep every letter/number in every script;
+    // only case, whitespace and punctuation are normalized away.
+    const fold = (t) => String(t || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
     const rows = core.readRegister();
     const groups = new Map();
     for (const lesson of rows) {
       if (lesson.status === "superseded" || lesson.status === "deprecated") continue;
       const foldedTitle = fold(lesson.title);
       const foldedDescription = fold(lesson.description);
-      // The fold is ASCII-only, so non-Latin text folds to "". Never group on
-      // empty keys — that would conflate every non-English lesson into one
-      // "duplicate" group and retire all but one of them.
-      if (!foldedTitle || !foldedDescription) continue;
+      if (!foldedTitle || !foldedDescription) continue; // emoji-only etc: never judge on empty keys
       const key = foldedTitle + "|" + foldedDescription;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(lesson);
@@ -198,20 +201,47 @@ switch (command) {
     }
     if (args["dry-run"] !== true && toAppend.length) {
       // Single-writer lock: two concurrent syncs both pass the read-side
-      // duplicate check and both append the same content id. mkdir is atomic;
-      // stale locks (>10 min) are taken over.
-      const lockDir = path.join(core.MUPHYS_HOME, ".sync.lock");
-      try {
-        fs.mkdirSync(lockDir);
-      } catch {
-        let stale = false;
-        try { stale = Date.now() - fs.statSync(lockDir).mtimeMs > 10 * 60 * 1000; } catch { stale = true; }
-        if (!stale) {
-          out({ skipped: true, reason: "another sync holds the lock", lock: lockDir });
-          break;
+      // duplicate check and both append the same content id. The lock is a
+      // FILE created with O_EXCL (the atomic front door) containing the
+      // holder's pid. Takeover policy: a lock whose recorded pid is still
+      // alive is NEVER touched — that closes the TOCTOU where a process
+      // judges a lock stale by age and then removes a fresh lock that
+      // replaced it in the gap (any age-based dir takeover has that hole; a
+      // live-pid check cannot displace an active writer). A dead-pid lock is
+      // unlinked and re-contested through O_EXCL, so racing reapers get
+      // exactly one winner. Recycled-pid false positives fail toward
+      // "skip this run" — the safe direction — and clear on the next tick.
+      const lockPath = path.join(core.MUPHYS_HOME, ".sync.lock");
+      const tryLock = () => {
+        try {
+          fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }), { flag: "wx", mode: 0o600 });
+          return true;
+        } catch {
+          return false;
         }
-        fs.rmSync(lockDir, { recursive: true, force: true });
-        fs.mkdirSync(lockDir, { recursive: true });
+      };
+      const acquireLock = () => {
+        if (tryLock()) return true;
+        let holderAlive = true;
+        try {
+          const holder = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+          try {
+            process.kill(Number(holder.pid), 0);
+          } catch {
+            holderAlive = false;
+          }
+        } catch {
+          holderAlive = false; // unreadable/legacy lock artifact: treat as dead
+        }
+        if (holderAlive) return false;
+        try {
+          fs.rmSync(lockPath, { recursive: true, force: true }); // dead holder; ENOENT fine
+        } catch { /* another reaper got it */ }
+        return tryLock(); // one O_EXCL winner among racing reapers
+      };
+      if (!acquireLock()) {
+        out({ skipped: true, reason: "another sync holds the lock", lock: lockPath });
+        break;
       }
       try {
         // Re-check ids under the lock — the racing sync may have won.
@@ -223,7 +253,7 @@ switch (command) {
         }
         out({ dryRun: false, totalAppended: stillNew.length, projects: summary });
       } finally {
-        fs.rmSync(lockDir, { recursive: true, force: true });
+        fs.rmSync(lockPath, { force: true });
       }
       break;
     }

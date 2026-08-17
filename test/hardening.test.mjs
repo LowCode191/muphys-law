@@ -53,14 +53,14 @@ test("dedupe never groups non-Latin lessons on empty fold keys", () => {
 test("sync respects a held lock and appends nothing", () => {
   fs.writeFileSync(path.join(HOME, "projects.json"), JSON.stringify({ projects: [{ slug: "demo", root: HOME }] }));
   fs.writeFileSync(path.join(HOME, "LESSONS-LEARNED.jsonl"), JSON.stringify({ title: "Sync lesson", description: "A lesson captured at the project." }) + "\n");
-  fs.mkdirSync(path.join(HOME, ".sync.lock"));
+  fs.writeFileSync(path.join(HOME, ".sync.lock"), JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }));
   try {
     const before_ = core.readRegister().length;
     const result = JSON.parse(cli(["sync"]));
     assert.equal(result.skipped, true);
     assert.equal(core.readRegister().length, before_, "no append under a held lock");
   } finally {
-    fs.rmSync(path.join(HOME, ".sync.lock"), { recursive: true, force: true });
+    fs.rmSync(path.join(HOME, ".sync.lock"), { force: true });
   }
   const applied = JSON.parse(cli(["sync"]));
   assert.equal(applied.totalAppended, 1, "sync proceeds once the lock is free");
@@ -100,4 +100,43 @@ test("literal JSON null state (valid JSON!) still recalls — never silently dis
     encoding: "utf8",
   });
   assert.match(out, /<lessons-recall>/);
+});
+
+test("dedupe: mixed-language lessons sharing ASCII tokens are NOT conflated", () => {
+  const pair = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: "API 本番環境では必ずバックアップを取る production", description: "本番環境の API を変更する前にバックアップ。production の教訓。" },
+    { title: "API レート制限は指数バックオフで処理する production", description: "API のレート制限エラーは指数バックオフ。production の別の教訓。" },
+  ] }), { author: "test" });
+  const plan = JSON.parse(cli(["dedupe"]));
+  const planned = JSON.stringify(plan.wouldRetire || []);
+  for (const record of pair) assert.ok(!planned.includes(record.id), "distinct mixed-language lessons must never be dedupe candidates");
+});
+
+test("dedupe: exact non-Latin duplicates ARE now grouped (unicode fold)", () => {
+  const dupes = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: "重複した教訓のタイトル", description: "全く同じ説明文です。" },
+    { title: "重複した教訓のタイトル", description: "全く同じ説明文です。" },
+  ] }), { author: "test" });
+  const plan = JSON.parse(cli(["dedupe"]));
+  const planned = JSON.stringify(plan.wouldRetire || []);
+  assert.ok(dupes.some((record) => planned.includes(record.id)), "exact non-Latin duplicates must be dedupe candidates");
+});
+
+test("sync: concurrent runs against a STALE lock never write duplicate ids", async () => {
+  const raceHome = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-race-"));
+  fs.writeFileSync(path.join(raceHome, "projects.json"), JSON.stringify({ projects: [{ slug: "race", root: raceHome }] }));
+  fs.writeFileSync(path.join(raceHome, "LESSONS-LEARNED.jsonl"),
+    JSON.stringify({ title: "Race lesson one", description: "First lesson for the race test." }) + "\n" +
+    JSON.stringify({ title: "Race lesson two", description: "Second lesson for the race test." }) + "\n");
+  const staleLock = path.join(raceHome, ".sync.lock");
+  fs.writeFileSync(staleLock, JSON.stringify({ pid: 999999999, ts: "2026-01-01T00:00:00Z" }));
+  const { execFile } = await import("node:child_process");
+  const run = () => new Promise((resolve) => execFile("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: raceHome } }, () => resolve()));
+  await Promise.all([run(), run(), run()]);
+  // settle: one more sync with no lock contention picks up any stragglers
+  await run();
+  const register = path.join(raceHome, "lessons.jsonl");
+  const ids = fs.readFileSync(register, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l).id);
+  assert.equal(new Set(ids).size, ids.length, `duplicate ids written under contention: ${ids.join(",")}`);
+  assert.equal(ids.length, 2, "both lessons land exactly once");
 });
