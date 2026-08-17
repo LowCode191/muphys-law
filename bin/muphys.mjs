@@ -129,7 +129,10 @@ switch (command) {
       .normalize("NFC")
       .replace(/[‘’‚‛“”„‟–—‒―… ]/g, (ch) => TYPOGRAPHIC.get(ch) ?? ch)
       .replace(/\s+/g, " ")
-      .replace(/[\s-]+$/, "")
+      // Trailing separator-dash trim, gated on preceding whitespace: "title —"
+      // is separator noise, but a dash GLUED to the last token is content —
+      // "service tier is A-" must never collide with "service tier is A".
+      .replace(/\s[-\s]+$/, "")
       .trim();
     const rows = core.readRegister();
     const groups = new Map();

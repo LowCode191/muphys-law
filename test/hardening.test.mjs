@@ -190,3 +190,21 @@ test("dedupe still groups the original backfill class: typographic quote/dash va
   const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
   assert.ok(dupes.some((record) => planned.includes(record.id)), "typographic-variant copies of the same lesson must group");
 });
+
+test("dedupe: a dash glued to the last token is content, not separator noise (A- ≠ A)", () => {
+  const pair = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: "service tier is A-", description: "The service tier grade here is A- for this quarter." },
+    { title: "service tier is A", description: "The service tier grade here is A for this quarter." },
+  ] }), { author: "test" });
+  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
+  for (const record of pair) assert.ok(!planned.includes(record.id), "grade A- and grade A are distinct lessons");
+});
+
+test("dedupe: whitespace-separated trailing dashes still fold away (title — variants group)", () => {
+  const dupes = core.appendLessons(core.lessonEntries({ lessons: [
+    { title: "Always verify the backup restore path —", description: "Backups without a tested restore path are decorative —" },
+    { title: "Always verify the backup restore path", description: "Backups without a tested restore path are decorative" },
+  ] }), { author: "test" });
+  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
+  assert.ok(dupes.some((record) => planned.includes(record.id)), "separator-dash variants of the same lesson must group");
+});
