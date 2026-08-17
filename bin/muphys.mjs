@@ -6,7 +6,7 @@
 //   muphys query "<text>" [--tags a,b] [--limit N]
 //   muphys supersede --ids id1,id2 --superseded-by idX --reason "..."
 //   muphys deprecate --ids id1,id2 --reason "..."
-//   muphys dedupe [--apply]        exact content duplicates -> superseded
+//   muphys dedupe [--apply]        NFC-exact duplicates -> superseded; near-matches reported for review
 //   muphys sync [--dry-run]        pull project LESSONS-LEARNED.jsonl files in
 //   muphys doctor                  integrity + liveness checks
 //   muphys stats                   register/funnel counts
@@ -97,80 +97,97 @@ switch (command) {
   }
 
   case "dedupe": {
-    // Exact content duplicates only (punctuation-folded title+description
-    // equality). Anything less identical is a curator judgment call.
-    // Dedupe equality is DESTRUCTIVE under --apply, and four review rounds
-    // proved a lesson about lossy folds: every character class we stripped
-    // created a new false-merge that retired a genuinely distinct lesson —
-    // ASCII-only folding ate non-Latin text, \p{L}\p{N} ate combining marks
-    // (क vs कि), adding \p{M} still ate symbols (a ✅-lesson merged with its
-    // ❌-opposite), and locale-blind toLowerCase corrupts Turkish in BOTH
-    // directions with no regex fix possible.
+    // Two tiers, because dedupe is DESTRUCTIVE under --apply and six review
+    // rounds proved a theorem about lossy transforms on a destructive path:
+    // enumeration of their failure modes never terminates. Every stripped
+    // character class created a false-merge (ASCII folding ate non-Latin
+    // text; \p{L}\p{N} ate combining marks, क vs कि; \p{M} still ate symbols,
+    // ✅ vs ❌; toLowerCase corrupts Turkish both ways) — and after retreating
+    // to "strip nothing semantic", the surviving fold FEATURES still merged
+    // real lessons: the trailing-dash trim ate a lesson about a terminal
+    // dash, whitespace collapse merged a two-line payload with its one-line
+    // variant, the typographic map merged lessons about exact characters
+    // („ vs "), and the "|" composite key was delimiter-injectable from
+    // round 1 (title "a|b" + desc "c" ≡ title "a" + desc "b|c").
     //
-    // So the fold strips NOTHING semantic. It applies only equivalences that
-    // cannot distinguish two real lessons:
-    //   - NFC canonical normalization (precomposed ≡ decomposed, by Unicode's
-    //     own definition of "same text")
-    //   - typographic quote/dash/ellipsis variants → their plain forms (the
-    //     original backfill-duplicate class this command exists for)
-    //   - whitespace runs → single space; trailing separator-dash runs dropped
-    //
-    // Deliberately NOT folded: case (locale-dependent — case-variant copies
-    // are treated as distinct; a curator can supersede them manually, which
-    // is the cheap direction of error) and every letter/mark/symbol/emoji.
+    // So the split:
+    //   AUTO-RETIRE (--apply) — NFC-exact tuple equality ONLY. NFC is
+    //     Unicode's own definition of "same text"; the JSON-array key is
+    //     structural, so there is no delimiter to inject. No case fold, no
+    //     typographic map, no whitespace collapse, no trim. Nothing lossy
+    //     ever gates destruction.
+    //   REVIEW CANDIDATES (always report-only) — the folded near-match
+    //     (typographic variants, whitespace runs, separator dashes: the
+    //     original backfill class) is surfaced for a curator to judge and
+    //     supersede manually. Missed-or-deferred merge is the cheap error;
+    //     a false auto-retire is the expensive one.
+    const nfc = (t) => String(t || "").normalize("NFC");
+    const exactKey = (lesson) => JSON.stringify([nfc(lesson.title), nfc(lesson.description)]);
     const TYPOGRAPHIC = new Map(Object.entries({
       "‘": "'", "’": "'", "‚": "'", "‛": "'",
       "“": '"', "”": '"', "„": '"', "‟": '"',
       "–": "-", "—": "-", "‒": "-", "―": "-",
       "…": "...",
-      " ": " ",
+      " ": " ",
     }));
     const fold = (t) => String(t || "")
       .normalize("NFC")
-      .replace(/[‘’‚‛“”„‟–—‒―… ]/g, (ch) => TYPOGRAPHIC.get(ch) ?? ch)
+      .replace(/[‘’‚‛“”„‟–—‒―… ]/g, (ch) => TYPOGRAPHIC.get(ch) ?? ch)
       .replace(/\s+/g, " ")
-      // Trailing separator-dash trim, gated on preceding whitespace: "title —"
-      // is separator noise, but a dash GLUED to the last token is content —
-      // "service tier is A-" must never collide with "service tier is A".
+      // Whitespace-gated separator trim: "title —" is decoration, but a dash
+      // GLUED to the last token is content ("service tier is A-" ≠ "... A").
       .replace(/\s[-\s]+$/, "")
       .trim();
-    const rows = core.readRegister();
-    const groups = new Map();
-    for (const lesson of rows) {
-      if (lesson.status === "superseded" || lesson.status === "deprecated") continue;
-      const foldedTitle = fold(lesson.title);
-      const foldedDescription = fold(lesson.description);
-      if (!foldedTitle || !foldedDescription) continue; // emoji-only etc: never judge on empty keys
-      const key = foldedTitle + "|" + foldedDescription;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(lesson);
+    const active = core.readRegister().filter((lesson) => lesson.status !== "superseded" && lesson.status !== "deprecated");
+
+    const exactGroups = new Map();
+    for (const lesson of active) {
+      if (!nfc(lesson.title) || !nfc(lesson.description)) continue; // never judge on empty content
+      const key = exactKey(lesson);
+      if (!exactGroups.has(key)) exactGroups.set(key, []);
+      exactGroups.get(key).push(lesson);
     }
     const plans = [];
-    for (const members of groups.values()) {
+    for (const members of exactGroups.values()) {
       if (members.length < 2) continue;
       const keeper = [...members].sort((a, b) => String(a.timestamp || "").localeCompare(String(b.timestamp || ""))).pop();
       for (const member of members) {
         if (member.id !== keeper.id) plans.push({ retire: member.id, keeper: keeper.id, title: member.title });
       }
     }
-    if (!plans.length) {
-      out({ duplicates: 0 });
-      break;
+
+    const foldGroups = new Map();
+    for (const lesson of active) {
+      const foldedTitle = fold(lesson.title);
+      const foldedDescription = fold(lesson.description);
+      if (!foldedTitle || !foldedDescription) continue; // emoji-only etc: never judge on empty keys
+      const key = JSON.stringify([foldedTitle, foldedDescription]);
+      if (!foldGroups.has(key)) foldGroups.set(key, []);
+      foldGroups.get(key).push(lesson);
     }
+    const candidates = [];
+    for (const members of foldGroups.values()) {
+      if (members.length < 2) continue;
+      // Groups that are entirely NFC-exact already live in the auto-retire
+      // plan; a candidate group must contain at least two DISTINCT contents.
+      if (new Set(members.map(exactKey)).size < 2) continue;
+      candidates.push({ ids: members.map((m) => m.id), titles: members.map((m) => m.title) });
+    }
+
     if (args.apply !== true) {
-      out({ dryRun: true, wouldRetire: plans });
+      out({ dryRun: true, wouldRetire: plans, reviewCandidates: candidates });
       break;
     }
     for (const plan of plans) {
       core.callTool("lessons_supersede", { ids: [plan.retire], supersededBy: plan.keeper, reason: "exact-duplicate-content (muphys dedupe)" });
     }
-    out({ retired: plans.length });
+    out({ retired: plans.length, reviewCandidates: candidates });
     break;
   }
 
   case "sync": {
     // Deterministic feed-up of per-project LESSONS-LEARNED.jsonl files.
-    // Content-derived ids (llp-<sha1(slug|title|description)>) make re-runs
+    // Content-derived ids (llp-<sha1 of the [slug,title,description] JSON tuple>) make re-runs
     // idempotent with no checkpoint state; the register is append-only here.
     let registry;
     try {
@@ -206,7 +223,10 @@ switch (command) {
         const title = typeof entry.title === "string" ? entry.title.trim().slice(0, 300) : "";
         const description = typeof entry.description === "string" ? entry.description.trim().slice(0, 8000) : "";
         if (!title || !description) { row.invalid += 1; return; }
-        const id = "llp-" + crypto.createHash("sha1").update(`${slug}|${title}|${description}`).digest("hex").slice(0, 12);
+        // Structural JSON-tuple hash basis: with a bare "|" join, title "a|b" +
+        // desc "c" collides with title "a" + desc "b|c" — the second lesson
+        // inherits the first's id and silently never syncs.
+        const id = "llp-" + crypto.createHash("sha1").update(JSON.stringify([slug, title, description])).digest("hex").slice(0, 12);
         if (existing.has(id)) { row.duplicates += 1; return; }
         existing.add(id);
         const date = typeof entry.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.date) ? entry.date : now.slice(0, 10);

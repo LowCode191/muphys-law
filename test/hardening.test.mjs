@@ -21,6 +21,18 @@ function cli(cliArgs, env = {}) {
   return execFileSync("node", [CLI, ...cliArgs], { env: { ...process.env, MUPHYS_HOME: HOME, ...env }, encoding: "utf8" });
 }
 
+// Round 7 split the dedupe surfaces: wouldRetire (destructive, NFC-exact
+// only) and reviewCandidates (report-only fold near-matches). Distinctness
+// tests must assert absence from BOTH.
+function dedupePlan() {
+  const plan = JSON.parse(cli(["dedupe"]));
+  return {
+    plan,
+    retire: JSON.stringify(plan.wouldRetire || []),
+    review: JSON.stringify(plan.reviewCandidates || []),
+  };
+}
+
 before(() => {
   core.appendLessons(core.lessonEntries({ lessons: [
     { title: "Alpha rule", description: "First version of the alpha guidance for the fleet." },
@@ -41,9 +53,8 @@ test("supersede refuses a retired replacement (cycles unrepresentable)", () => {
 });
 
 test("dedupe never groups non-Latin lessons on empty fold keys", () => {
-  const result = JSON.parse(cli(["dedupe"]));
-  const planned = JSON.stringify(result.wouldRetire || []);
-  assert.ok(!planned.includes("llg-") || !/日本語|한국어/.test(planned), "non-Latin lessons must not appear in dedupe plans");
+  const { retire, review } = dedupePlan();
+  for (const surface of [retire, review]) assert.ok(!/日本語|한국어/.test(surface), "distinct non-Latin lessons must not surface in either dedupe tier");
   const rows = core.readRegister();
   const nonLatin = rows.filter((r) => /日本語|한국어/.test(r.title));
   assert.equal(nonLatin.length, 2);
@@ -107,12 +118,14 @@ test("dedupe: mixed-language lessons sharing ASCII tokens are NOT conflated", ()
     { title: "API 本番環境では必ずバックアップを取る production", description: "本番環境の API を変更する前にバックアップ。production の教訓。" },
     { title: "API レート制限は指数バックオフで処理する production", description: "API のレート制限エラーは指数バックオフ。production の別の教訓。" },
   ] }), { author: "test" });
-  const plan = JSON.parse(cli(["dedupe"]));
-  const planned = JSON.stringify(plan.wouldRetire || []);
-  for (const record of pair) assert.ok(!planned.includes(record.id), "distinct mixed-language lessons must never be dedupe candidates");
+  const { retire, review } = dedupePlan();
+  for (const record of pair) {
+    assert.ok(!retire.includes(record.id), "distinct mixed-language lessons must never auto-retire");
+    assert.ok(!review.includes(record.id), "distinct mixed-language lessons must not even be review candidates");
+  }
 });
 
-test("dedupe: exact non-Latin duplicates ARE now grouped (unicode fold)", () => {
+test("dedupe: exact non-Latin duplicates ARE grouped (NFC-exact tier)", () => {
   const dupes = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "重複した教訓のタイトル", description: "全く同じ説明文です。" },
     { title: "重複した教訓のタイトル", description: "全く同じ説明文です。" },
@@ -146,9 +159,11 @@ test("dedupe fold preserves combining marks: Devanagari क and कि never col
     { title: "क के बारे में सबक", description: "पहला सबक क अक्षर के बारे में है।" },
     { title: "कि के बारे में सबक", description: "पहला सबक कि अक्षर के बारे में है।" },
   ] }), { author: "test" });
-  const plan = JSON.parse(cli(["dedupe"]));
-  const planned = JSON.stringify(plan.wouldRetire || []);
-  for (const record of pair) assert.ok(!planned.includes(record.id), "mark-distinguished Devanagari lessons must never be dedupe candidates");
+  const { retire, review } = dedupePlan();
+  for (const record of pair) {
+    assert.ok(!retire.includes(record.id), "mark-distinguished Devanagari lessons must never auto-retire");
+    assert.ok(!review.includes(record.id), "mark-distinguished Devanagari lessons must not even be review candidates");
+  }
 });
 
 test("dedupe fold NFC-normalizes: precomposed and decomposed forms of the same text ARE grouped", () => {
@@ -159,9 +174,8 @@ test("dedupe fold NFC-normalizes: precomposed and decomposed forms of the same t
     { title: precomposed, description: `${precomposed} description body.` },
     { title: decomposed, description: `${decomposed} description body.` },
   ] }), { author: "test" });
-  const plan = JSON.parse(cli(["dedupe"]));
-  const planned = JSON.stringify(plan.wouldRetire || []);
-  assert.ok(dupes.some((record) => planned.includes(record.id)), "same text in different normalization forms must be dedupe candidates");
+  const { retire } = dedupePlan();
+  assert.ok(dupes.some((record) => retire.includes(record.id)), "canonically-equivalent forms are the same text — NFC-exact tier must auto-retire one");
 });
 
 test("dedupe never merges emoji-distinguished lessons (✅ vs ❌ are opposites)", () => {
@@ -169,8 +183,11 @@ test("dedupe never merges emoji-distinguished lessons (✅ vs ❌ are opposites)
     { title: "deploy check ✅ before restart", description: "Run the deploy check ✅ before any restart of the service." },
     { title: "deploy check ❌ before restart", description: "Run the deploy check ❌ before any restart of the service." },
   ] }), { author: "test" });
-  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
-  for (const record of pair) assert.ok(!planned.includes(record.id), "emoji-distinguished lessons must never be dedupe candidates");
+  const { retire, review } = dedupePlan();
+  for (const record of pair) {
+    assert.ok(!retire.includes(record.id), "emoji-distinguished lessons must never auto-retire");
+    assert.ok(!review.includes(record.id), "emoji-distinguished lessons must not even be review candidates");
+  }
 });
 
 test("dedupe treats case variants as DISTINCT (locale-safe by design: IŞIK ≠ ışık)", () => {
@@ -178,17 +195,24 @@ test("dedupe treats case variants as DISTINCT (locale-safe by design: IŞIK ≠ 
     { title: "IŞIK KONTROL YAP KURALI", description: "BÜYÜK HARFLİ DERS METNİ BURADA." },
     { title: "ışık kontrol yap kuralı", description: "büyük harfli ders metni burada.".toLowerCase() },
   ] }), { author: "test" });
-  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
-  for (const record of pair) assert.ok(!planned.includes(record.id), "case variants must never be dedupe candidates (Turkish casing is unfixable by folding)");
+  const { retire, review } = dedupePlan();
+  for (const record of pair) {
+    assert.ok(!retire.includes(record.id), "case variants must never auto-retire (Turkish casing is unfixable by folding)");
+    assert.ok(!review.includes(record.id), "case variants are deliberately not even review candidates");
+  }
 });
 
-test("dedupe still groups the original backfill class: typographic quote/dash variants", () => {
+test("round 7: typographic quote/dash variants are review candidates, never auto-retired", () => {
+  // The original backfill class this command was built for — but a lesson can
+  // be ABOUT an exact character („ vs "), so the typographic map is lossy and
+  // lossy never gates destruction. The curator sees the pair and decides.
   const dupes = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "Don't pipe ‘sensitive’ output — mask it", description: "The rule… applies to “every” pipeline — always." },
     { title: "Don't pipe 'sensitive' output - mask it", description: "The rule... applies to \"every\" pipeline - always." },
   ] }), { author: "test" });
-  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
-  assert.ok(dupes.some((record) => planned.includes(record.id)), "typographic-variant copies of the same lesson must group");
+  const { retire, review } = dedupePlan();
+  for (const record of dupes) assert.ok(!retire.includes(record.id), "typographic variants are not NFC-exact — they must never auto-retire");
+  assert.ok(dupes.every((record) => review.includes(record.id)), "typographic-variant copies must surface together for curator review");
 });
 
 test("dedupe: a dash glued to the last token is content, not separator noise (A- ≠ A)", () => {
@@ -196,15 +220,92 @@ test("dedupe: a dash glued to the last token is content, not separator noise (A-
     { title: "service tier is A-", description: "The service tier grade here is A- for this quarter." },
     { title: "service tier is A", description: "The service tier grade here is A for this quarter." },
   ] }), { author: "test" });
-  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
-  for (const record of pair) assert.ok(!planned.includes(record.id), "grade A- and grade A are distinct lessons");
+  const { retire, review } = dedupePlan();
+  for (const record of pair) {
+    assert.ok(!retire.includes(record.id), "grade A- and grade A must never auto-retire");
+    assert.ok(!review.includes(record.id), "grade A- and grade A must not even be review candidates");
+  }
 });
 
-test("dedupe: whitespace-separated trailing dashes still fold away (title — variants group)", () => {
+test("round 7: separator-dash variants are review candidates, never auto-retired", () => {
+  // A trailing "—" is usually decoration — but "Required delimiter is —" is a
+  // lesson ABOUT a terminal dash, and no trim can tell those apart. Report,
+  // never retire.
   const dupes = core.appendLessons(core.lessonEntries({ lessons: [
     { title: "Always verify the backup restore path —", description: "Backups without a tested restore path are decorative —" },
     { title: "Always verify the backup restore path", description: "Backups without a tested restore path are decorative" },
   ] }), { author: "test" });
-  const planned = JSON.stringify(JSON.parse(cli(["dedupe"])).wouldRetire || []);
-  assert.ok(dupes.some((record) => planned.includes(record.id)), "separator-dash variants of the same lesson must group");
+  const { retire, review } = dedupePlan();
+  for (const record of dupes) assert.ok(!retire.includes(record.id), "separator-dash variants are not NFC-exact — they must never auto-retire");
+  assert.ok(dupes.every((record) => review.includes(record.id)), "separator-dash variants must surface together for curator review");
+});
+
+// ---------------------------------------------------------------------------
+// Round 7: the four confirmed fold collisions must be unrepresentable in the
+// destructive path — proven under a real --apply, not a dry run.
+// ---------------------------------------------------------------------------
+
+test("round 7: --apply retires only NFC-exact duplicates; every semantic near-match survives", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r7-"));
+  const seed = [
+    // (1) composite-key delimiter injection
+    { title: "a|b", description: "c" },
+    { title: "a", description: "b|c" },
+    // (2) a lesson ABOUT a terminal dash vs its dash-less sibling
+    { title: "Delimiter rule", description: "Required delimiter is —" },
+    { title: "Delimiter rule", description: "Required delimiter is" },
+    // (3) whitespace is semantic in payloads
+    { title: "Printf payload", description: "line one\npayload line two" },
+    { title: "Printf payload", description: "line one payload line two" },
+    // (4) lessons about exact characters
+    { title: "Charset rule", description: "Reject character „" },
+    { title: "Charset rule", description: 'Reject character "' },
+    // (5) a true byte-identical duplicate — the one pair that must still die
+    { title: "True duplicate", description: "Identical description body." },
+    { title: "True duplicate", description: "Identical description body." },
+  ];
+  for (const lesson of seed) {
+    execFileSync("node", [CLI, "add", "--title", lesson.title, "--description", lesson.description],
+      { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" });
+  }
+  const result = JSON.parse(execFileSync("node", [CLI, "dedupe", "--apply"],
+    { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" }));
+
+  assert.equal(result.retired, 1, "exactly the byte-identical pair auto-retires — nothing else");
+  const rows = fs.readFileSync(path.join(home, "lessons.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const superseded = rows.filter((r) => r.status === "superseded");
+  assert.equal(superseded.length, 1);
+  assert.equal(superseded[0].title, "True duplicate");
+  const active = rows.filter((r) => r.status === "active");
+  assert.equal(active.length, 9, "all eight semantic near-matches plus the kept duplicate stay active");
+
+  const review = JSON.stringify(result.reviewCandidates || []);
+  const byContent = (title, desc) => rows.find((r) => r.title === title && r.description === desc);
+  // fold-equal near-matches surface for the curator...
+  for (const [title, desc] of [
+    ["Delimiter rule", "Required delimiter is —"], ["Delimiter rule", "Required delimiter is"],
+    ["Printf payload", "line one\npayload line two"], ["Printf payload", "line one payload line two"],
+    ["Charset rule", "Reject character „"], ["Charset rule", 'Reject character "'],
+  ]) {
+    assert.ok(review.includes(byContent(title, desc).id), `review candidates must include ${title} / ${desc}`);
+  }
+  // ...the structurally-distinct pipe pair appears NOWHERE...
+  for (const [title, desc] of [["a|b", "c"], ["a", "b|c"]]) {
+    const id = byContent(title, desc).id;
+    assert.ok(!review.includes(id), "pipe-injection pair must not be review candidates — the structural key keeps them distinct");
+  }
+  // ...and the retired pair is not double-reported as a candidate.
+  assert.ok(!review.includes("True duplicate"), "NFC-exact groups belong to the retire plan, not the review list");
+});
+
+test("round 7: sync content ids are delimiter-proof (a|b + c ≠ a + b|c)", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r7sync-"));
+  fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({ projects: [{ slug: "inj", root: home }] }));
+  fs.writeFileSync(path.join(home, "LESSONS-LEARNED.jsonl"),
+    JSON.stringify({ title: "a|b", description: "c" }) + "\n" +
+    JSON.stringify({ title: "a", description: "b|c" }) + "\n");
+  execFileSync("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" });
+  const rows = fs.readFileSync(path.join(home, "lessons.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(rows.length, 2, "both pipe-shifted lessons land — neither is swallowed as the other's duplicate");
+  assert.notEqual(rows[0].id, rows[1].id, "structural tuple hash gives distinct ids");
 });
