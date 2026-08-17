@@ -103,7 +103,13 @@ switch (command) {
     const groups = new Map();
     for (const lesson of rows) {
       if (lesson.status === "superseded" || lesson.status === "deprecated") continue;
-      const key = fold(lesson.title) + "|" + fold(lesson.description);
+      const foldedTitle = fold(lesson.title);
+      const foldedDescription = fold(lesson.description);
+      // The fold is ASCII-only, so non-Latin text folds to "". Never group on
+      // empty keys — that would conflate every non-English lesson into one
+      // "duplicate" group and retire all but one of them.
+      if (!foldedTitle || !foldedDescription) continue;
+      const key = foldedTitle + "|" + foldedDescription;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(lesson);
     }
@@ -190,10 +196,37 @@ switch (command) {
       });
     }
     if (args["dry-run"] !== true && toAppend.length) {
-      fs.mkdirSync(path.dirname(core.REGISTER_JSONL), { recursive: true });
-      fs.appendFileSync(core.REGISTER_JSONL, toAppend.join("\n") + "\n", { mode: 0o600 });
+      // Single-writer lock: two concurrent syncs both pass the read-side
+      // duplicate check and both append the same content id. mkdir is atomic;
+      // stale locks (>10 min) are taken over.
+      const lockDir = path.join(core.MUPHYS_HOME, ".sync.lock");
+      try {
+        fs.mkdirSync(lockDir);
+      } catch {
+        let stale = false;
+        try { stale = Date.now() - fs.statSync(lockDir).mtimeMs > 10 * 60 * 1000; } catch { stale = true; }
+        if (!stale) {
+          out({ skipped: true, reason: "another sync holds the lock", lock: lockDir });
+          break;
+        }
+        fs.rmSync(lockDir, { recursive: true, force: true });
+        fs.mkdirSync(lockDir, { recursive: true });
+      }
+      try {
+        // Re-check ids under the lock — the racing sync may have won.
+        const current = new Set(core.readRegister().map((l) => l.id));
+        const stillNew = toAppend.filter((line) => !current.has(JSON.parse(line).id));
+        if (stillNew.length) {
+          fs.mkdirSync(path.dirname(core.REGISTER_JSONL), { recursive: true });
+          fs.appendFileSync(core.REGISTER_JSONL, stillNew.join("\n") + "\n", { mode: 0o600 });
+        }
+        out({ dryRun: false, totalAppended: stillNew.length, projects: summary });
+      } finally {
+        fs.rmSync(lockDir, { recursive: true, force: true });
+      }
+      break;
     }
-    out({ dryRun: args["dry-run"] === true, totalAppended: args["dry-run"] === true ? 0 : toAppend.length, projects: summary });
+    out({ dryRun: args["dry-run"] === true, totalAppended: 0, projects: summary });
     break;
   }
 
@@ -207,8 +240,12 @@ switch (command) {
       : 0;
     if (withoutExplicitId > 0) issues.push(`${withoutExplicitId} register rows lack an explicit id — run writers from this package only`);
     for (const lesson of rows) {
-      if (lesson.status === "superseded" && lesson.superseded_by && !rows.some((other) => other.id === lesson.superseded_by)) {
+      if (lesson.status !== "superseded" || !lesson.superseded_by) continue;
+      const replacement = rows.find((other) => other.id === lesson.superseded_by);
+      if (!replacement) {
         issues.push(`dangling superseded_by pointer: ${lesson.id} -> ${lesson.superseded_by}`);
+      } else if (replacement.status === "superseded" || replacement.status === "deprecated") {
+        issues.push(`superseded_by points at a retired lesson: ${lesson.id} -> ${lesson.superseded_by} (chains/cycles; re-point at the active replacement)`);
       }
     }
     for (const name of ["readRegister", "scoreLessonForQuery", "normalizeSearchText", "callTool"]) {

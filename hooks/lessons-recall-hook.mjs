@@ -60,7 +60,18 @@ const MIN_PROMPT_CHARS = 40; // "ok", "continue" never trigger recall
 
 // Optional scoping: only fire for sessions whose cwd matches this regex
 // (e.g. your agent workspace root). Unset = fire for every session.
-const CWD_FILTER = process.env.MUPHYS_HOOK_CWD_FILTER ? new RegExp(process.env.MUPHYS_HOOK_CWD_FILTER) : null;
+// An INVALID pattern must not throw at module load (that would exit nonzero
+// and block the user's prompt — the one thing this hook must never do). It
+// resolves to match-nothing: a broken scoping filter scopes to nothing, and
+// `muphys doctor`'s liveness check surfaces the resulting silence.
+const CWD_FILTER = (() => {
+  if (!process.env.MUPHYS_HOOK_CWD_FILTER) return null;
+  try {
+    return new RegExp(process.env.MUPHYS_HOOK_CWD_FILTER);
+  } catch {
+    return { test: () => false };
+  }
+})();
 
 function armForSession(sessionId, treatFraction) {
   const digest = crypto.createHash("sha256").update(`muphys-recall|${sessionId}`).digest();
@@ -125,10 +136,18 @@ function main() {
   } catch { /* best effort */ }
 
   const statePath = path.join(STATE_DIR, `${sessionId}.json`);
+  // Clamp whatever we read: a malformed or hand-edited state file must
+  // degrade to sane values, never to a reset cap or a crashed dedupe.
   let state = { injectedIds: [], injectionEvents: 0 };
-  try { state = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch { /* fresh session */ }
+  try {
+    const raw = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    state = {
+      injectedIds: Array.isArray(raw.injectedIds) ? raw.injectedIds.filter((x) => typeof x === "string").slice(-100) : [],
+      injectionEvents: Number.isFinite(Number(raw.injectionEvents)) ? Math.max(0, Number(raw.injectionEvents)) : 0,
+    };
+  } catch { /* fresh session */ }
   if (state.injectionEvents >= MAX_INJECTIONS_PER_SESSION) return;
-  const seen = new Set(state.injectedIds || []);
+  const seen = new Set(state.injectedIds);
 
   // Collapse register duplicates by normalized title, then keep only the TOP
   // ranks: if the best matches were already injected this session, stay
