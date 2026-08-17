@@ -253,7 +253,21 @@ switch (command) {
     }
     const injLog = path.resolve(process.env.MUPHYS_INJECTION_LOG || path.join(core.MUPHYS_HOME, "injections.jsonl"));
     if (!fs.existsSync(injLog)) {
-      issues.push(`no injection log at ${injLog} — if the recall hook is installed, it has never fired. Verify by EFFECT: send a real prompt and watch this file. Reading settings back proves nothing.`);
+      // Only alarm if the hook appears MOUNTED somewhere — a fresh install
+      // with no hook yet is healthy, not broken.
+      let mounted = false;
+      const os = await import("node:os");
+      for (const settingsPath of [
+        path.join(os.homedir(), ".claude", "settings.json"),
+        path.join(process.cwd(), ".claude", "settings.json"),
+      ]) {
+        try {
+          if (fs.readFileSync(settingsPath, "utf8").includes("lessons-recall-hook.mjs")) mounted = true;
+        } catch { /* absent */ }
+      }
+      if (mounted) {
+        issues.push(`hook is mounted but no injection log exists at ${injLog} — it has never fired. Verify by EFFECT: send a real prompt and watch this file. Reading settings back proves nothing (some harnesses never load the scope you installed into).`);
+      }
     }
     out({ register: { total: rows.length, active: core.activeLessons().length }, issues, ok: issues.length === 0 });
     process.exit(issues.length ? 1 : 0);
