@@ -1,6 +1,13 @@
 # Muphys Law
 
+![Muphys Law — whatever can go wrong, will — once](assets/banner.svg)
+
 **A lessons register for AI agent fleets — with the receipts.**
+
+*Yes, "Muphys." The name is a misspelling of Murphy's law that stuck — fitting
+for a project about mistakes becoming institutional memory (see also
+[Muphry's law](https://en.wikipedia.org/wiki/Muphry%27s_law)). The adage
+itself: whatever can go wrong, will. This register's amendment: — once.*
 
 Agents repeat each other's mistakes. Muphys Law is the smallest system we
 found that actually changes that: an append-only register of operational

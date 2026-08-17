@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="Muphys Law — whatever can go wrong, will — once. A falling slice of toast is flipped butter-side-up by a lesson card from the register.">
+  <defs>
+    <clipPath id="frame"><rect width="1200" height="300" rx="16"/></clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <!-- background -->
+    <rect width="1200" height="300" fill="#141a26"/>
+    <rect width="1200" height="300" fill="none"/>
+    <!-- faint register grid in the backdrop: the ledger underneath everything -->
+    <g stroke="#1f2735" stroke-width="1">
+      <line x1="0" y1="60"  x2="1200" y2="60"/>
+      <line x1="0" y1="120" x2="1200" y2="120"/>
+      <line x1="0" y1="180" x2="1200" y2="180"/>
+      <line x1="0" y1="240" x2="1200" y2="240"/>
+    </g>
+
+    <!-- floor -->
+    <line x1="48" y1="252" x2="560" y2="252" stroke="#3a4356" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- ===== incident #1: the toast that fell butter-side-down (the lesson's origin) ===== -->
+    <!-- splat butter on floor -->
+    <g transform="translate(120,252)">
+      <ellipse cx="0" cy="4" rx="46" ry="7" fill="#f5c84c" opacity="0.85"/>
+      <ellipse cx="-30" cy="2" rx="8" ry="3.4" fill="#f5c84c" opacity="0.7"/>
+      <ellipse cx="34" cy="1" rx="6" ry="2.6" fill="#f5c84c" opacity="0.7"/>
+      <!-- toast face-down on top of the splat -->
+      <g transform="translate(0,-13)">
+        <rect x="-38" y="-12" width="76" height="24" rx="8" fill="#c98f2e"/>
+        <rect x="-33" y="-8" width="66" height="16" rx="5" fill="#e8cf9d"/>
+      </g>
+      <text x="0" y="34" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#67718a">incident, once</text>
+    </g>
+
+    <!-- dashed arc: the original fall -->
+    <path d="M 150 66 C 128 110, 118 160, 118 212" fill="none" stroke="#4a5468" stroke-width="2.5" stroke-dasharray="2 7" stroke-linecap="round"/>
+
+    <!-- ===== the register card wedged into the path of the SECOND toast ===== -->
+    <g transform="translate(320,196) rotate(-22)">
+      <rect x="-52" y="-34" width="104" height="68" rx="7" fill="#eef1f8" stroke="#c3cadb" stroke-width="1.5"/>
+      <rect x="-52" y="-34" width="104" height="16" rx="7" fill="#dfe5f1"/>
+      <text x="-44" y="-22" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.5" fill="#4a5468">[llg-a41f]</text>
+      <line x1="-42" y1="-6"  x2="42" y2="-6"  stroke="#aeb8cd" stroke-width="3" stroke-linecap="round"/>
+      <line x1="-42" y1="6"   x2="30" y2="6"   stroke="#aeb8cd" stroke-width="3" stroke-linecap="round"/>
+      <line x1="-42" y1="18"  x2="38" y2="18"  stroke="#c3cadb" stroke-width="3" stroke-linecap="round"/>
+    </g>
+    <text x="320" y="286" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#8b93a7">the lesson, injected</text>
+
+    <!-- ===== incident #2: the falling toast, mid-air, deflected to land butter-UP ===== -->
+    <!-- fall arc that hits the card and curves out -->
+    <path d="M 356 54 C 344 96, 336 136, 342 168" fill="none" stroke="#8b93a7" stroke-width="2.5" stroke-dasharray="3 6" stroke-linecap="round"/>
+    <!-- corrected arc off the card -->
+    <path d="M 366 190 C 408 214, 448 232, 476 240" fill="none" stroke="#58c08c" stroke-width="3" stroke-dasharray="1 0" stroke-linecap="round"/>
+    <path d="M 476 240 l -12 -7 M 476 240 l -13 5" stroke="#58c08c" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+    <!-- toast tumbling mid-air (butter visible, rotating) -->
+    <g transform="translate(352,96) rotate(38)">
+      <rect x="-38" y="-14" width="76" height="28" rx="8" fill="#c98f2e"/>
+      <rect x="-33" y="-10" width="66" height="20" rx="5" fill="#f2e3c2"/>
+      <path d="M -20 -10 q 10 -8 22 -2 q 12 5 18 0 l 0 6 q -10 6 -20 2 q -12 -5 -20 0 z" fill="#ffd75e"/>
+    </g>
+
+    <!-- toast landed butter-side UP -->
+    <g transform="translate(516,238)">
+      <rect x="-38" y="-2" width="76" height="16" rx="6" fill="#c98f2e"/>
+      <rect x="-34" y="-8" width="68" height="12" rx="5" fill="#f2e3c2"/>
+      <path d="M -24 -8 q 12 -7 24 -3 q 12 4 22 1 l 0 4 l -46 0 z" fill="#ffd75e"/>
+      <ellipse cx="0" cy="-11" rx="10" ry="3" fill="#ffd75e"/>
+    </g>
+    <text x="516" y="286" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#58c08c">never twice</text>
+
+    <!-- ===== wordmark ===== -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+      <text x="640" y="128" font-size="64" font-weight="700" fill="#f2f4f8" letter-spacing="2">MUPHYS LAW</text>
+      <text x="643" y="170" font-size="21" fill="#c8cfdd">Whatever can go wrong, will &#8212; once.</text>
+      <text x="643" y="206" font-size="15" fill="#8b93a7">an operational-lessons register for AI agent fleets:</text>
+      <text x="643" y="228" font-size="15" fill="#8b93a7">capture &#8594; curate &#8594; inject &#8212; with the receipts.</text>
+    </g>
+
+    <!-- subtle frame -->
+    <rect x="1" y="1" width="1198" height="298" rx="15" fill="none" stroke="#2a3346" stroke-width="2"/>
+  </g>
+</svg>
