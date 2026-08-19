@@ -8,12 +8,12 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.join(HERE, "..", "hooks", "lessons-recall-hook.mjs");
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-hook-test-"));
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-hook-test-"));
 
 function runHook(payload, env = {}) {
   return execFileSync("node", [HOOK], {
     input: JSON.stringify(payload),
-    env: { ...process.env, MUPHYS_HOME: HOME, ...env },
+    env: { ...process.env, MURPHYS_HOME: HOME, ...env },
     encoding: "utf8",
   });
 }
@@ -68,7 +68,7 @@ test("same session never re-injects the same top lessons (no ranking slide)", ()
 });
 
 test("cwd filter gates sessions out", () => {
-  const out = runHook({ ...RELEVANT, session_id: "sess-gated" }, { MUPHYS_HOOK_CWD_FILTER: "^/agents/" });
+  const out = runHook({ ...RELEVANT, session_id: "sess-gated" }, { MURPHYS_HOOK_CWD_FILTER: "^/agents/" });
   assert.equal(out, "");
 });
 
@@ -96,5 +96,5 @@ test("experiment mode: deterministic arms, control logs but never emits", () => 
 });
 
 test("malformed stdin exits 0 silently (fail-open)", () => {
-  assert.equal(execFileSync("node", [HOOK], { input: "not json", env: { ...process.env, MUPHYS_HOME: HOME }, encoding: "utf8" }), "");
+  assert.equal(execFileSync("node", [HOOK], { input: "not json", env: { ...process.env, MURPHYS_HOME: HOME }, encoding: "utf8" }), "");
 });

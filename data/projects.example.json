@@ -1,5 +1,5 @@
 {
-  "description": "Registry of project roots whose LESSONS-LEARNED.jsonl files feed the register via `muphys sync` (scope project:<slug>). Copy to $MUPHYS_HOME/projects.json. NEVER rename a slug: ids are content-derived from it, so a rename re-imports history under new ids.",
+  "description": "Registry of project roots whose LESSONS-LEARNED.jsonl files feed the register via `murphys sync` (scope project:<slug>). Copy to $MURPHYS_HOME/projects.json. NEVER rename a slug: ids are content-derived from it, so a rename re-imports history under new ids.",
   "projects": [
     { "slug": "my-app", "root": "/absolute/path/to/my-app" },
     { "slug": "infra", "root": "/absolute/path/to/infra", "file": "docs/LESSONS-LEARNED.jsonl" }

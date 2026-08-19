@@ -8,8 +8,8 @@ import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-hardening-"));
-process.env.MUPHYS_HOME = HOME;
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-hardening-"));
+process.env.MURPHYS_HOME = HOME;
 
 const require = createRequire(import.meta.url);
 const core = require("../lib/register.cjs");
@@ -18,7 +18,7 @@ const CLI = path.join(HERE, "..", "bin", "muphys.mjs");
 const HOOK = path.join(HERE, "..", "hooks", "lessons-recall-hook.mjs");
 
 function cli(cliArgs, env = {}) {
-  return execFileSync("node", [CLI, ...cliArgs], { env: { ...process.env, MUPHYS_HOME: HOME, ...env }, encoding: "utf8" });
+  return execFileSync("node", [CLI, ...cliArgs], { env: { ...process.env, MURPHYS_HOME: HOME, ...env }, encoding: "utf8" });
 }
 
 // Round 7 split the dedupe surfaces: wouldRetire (destructive, byte-identical
@@ -80,7 +80,7 @@ test("sync respects a held lock and appends nothing", async () => {
 test("invalid cwd-filter regex exits 0, stays silent, never blocks the prompt", async () => {
   const out = execFileSync("node", [HOOK], {
     input: JSON.stringify({ session_id: "rex", cwd: "/tmp", prompt: "update the alpha guidance rule for the fleet so the second better version applies everywhere" }),
-    env: { ...process.env, MUPHYS_HOME: HOME, MUPHYS_HOOK_CWD_FILTER: "([unclosed" },
+    env: { ...process.env, MURPHYS_HOME: HOME, MURPHYS_HOOK_CWD_FILTER: "([unclosed" },
     encoding: "utf8",
   });
   assert.equal(out, "");
@@ -92,7 +92,7 @@ test("malformed hook state degrades to sane defaults, not a reset cap or crash",
   fs.writeFileSync(path.join(stateDir, "clamp.json"), '{"injectedIds": "not-an-array", "injectionEvents": "NaN-ish"}');
   const out = execFileSync("node", [HOOK], {
     input: JSON.stringify({ session_id: "clamp", cwd: "/tmp", prompt: "update the alpha guidance rule for the fleet so the second better version applies everywhere" }),
-    env: { ...process.env, MUPHYS_HOME: HOME },
+    env: { ...process.env, MURPHYS_HOME: HOME },
     encoding: "utf8",
   });
   assert.match(out, /<lessons-recall>/, "clamped state must still allow recall");
@@ -107,7 +107,7 @@ test("literal JSON null state (valid JSON!) still recalls — never silently dis
   fs.writeFileSync(path.join(stateDir, "nullstate.json"), "null");
   const out = execFileSync("node", [HOOK], {
     input: JSON.stringify({ session_id: "nullstate", cwd: "/tmp", prompt: "update the alpha guidance rule for the fleet so the second better version applies everywhere" }),
-    env: { ...process.env, MUPHYS_HOME: HOME },
+    env: { ...process.env, MURPHYS_HOME: HOME },
     encoding: "utf8",
   });
   assert.match(out, /<lessons-recall>/);
@@ -136,7 +136,7 @@ test("dedupe: exact non-Latin duplicates ARE grouped (byte-identical tier)", asy
 });
 
 test("sync: concurrent runs against a STALE lock never write duplicate ids", async () => {
-  const raceHome = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-race-"));
+  const raceHome = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-race-"));
   fs.writeFileSync(path.join(raceHome, "projects.json"), JSON.stringify({ projects: [{ slug: "race", root: raceHome }] }));
   fs.writeFileSync(path.join(raceHome, "LESSONS-LEARNED.jsonl"),
     JSON.stringify({ title: "Race lesson one", description: "First lesson for the race test." }) + "\n" +
@@ -144,7 +144,7 @@ test("sync: concurrent runs against a STALE lock never write duplicate ids", asy
   const staleLock = path.join(raceHome, ".sync.lock");
   fs.writeFileSync(staleLock, JSON.stringify({ pid: 999999999, ts: "2026-01-01T00:00:00Z" }));
   const { execFile } = await import("node:child_process");
-  const run = () => new Promise((resolve) => execFile("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: raceHome } }, () => resolve()));
+  const run = () => new Promise((resolve) => execFile("node", [CLI, "sync"], { env: { ...process.env, MURPHYS_HOME: raceHome } }, () => resolve()));
   await Promise.all([run(), run(), run(), run(), run()]);
   // settle: one more sync with no lock contention picks up any stragglers
   await run();
@@ -162,7 +162,7 @@ test("sync: concurrent runs against a STALE lock never write duplicate ids", asy
     else firstById.set(rowId, line);
   }
   assert.equal(firstById.size, 2, "both lessons land, each under exactly one id");
-  const stats = JSON.parse(execFileSync("node", [CLI, "stats"], { env: { ...process.env, MUPHYS_HOME: raceHome }, encoding: "utf8" }));
+  const stats = JSON.parse(execFileSync("node", [CLI, "stats"], { env: { ...process.env, MURPHYS_HOME: raceHome }, encoding: "utf8" }));
   assert.equal(stats.register.total, 2, "the reader collapses any raced duplicate line to exactly one lesson");
 });
 
@@ -264,7 +264,7 @@ test("round 7: separator-dash variants are review candidates, never auto-retired
 // ---------------------------------------------------------------------------
 
 test("round 7: --apply retires only byte-identical duplicates; every semantic near-match survives", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r7-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r7-"));
   const seed = [
     // (1) composite-key delimiter injection
     { title: "a|b", description: "c" },
@@ -287,10 +287,10 @@ test("round 7: --apply retires only byte-identical duplicates; every semantic ne
   ];
   for (const lesson of seed) {
     execFileSync("node", [CLI, "add", "--title", lesson.title, "--description", lesson.description],
-      { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" });
+      { env: { ...process.env, MURPHYS_HOME: home }, encoding: "utf8" });
   }
   const result = JSON.parse(execFileSync("node", [CLI, "dedupe", "--apply"],
-    { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" }));
+    { env: { ...process.env, MURPHYS_HOME: home }, encoding: "utf8" }));
 
   assert.equal(result.retired, 1, "exactly the byte-identical pair auto-retires — nothing else");
   const rows = fs.readFileSync(path.join(home, "lessons.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
@@ -321,19 +321,19 @@ test("round 7: --apply retires only byte-identical duplicates; every semantic ne
 });
 
 test("round 7: sync content ids are delimiter-proof (a|b + c ≠ a + b|c)", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r7sync-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r7sync-"));
   fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({ projects: [{ slug: "inj", root: home }] }));
   fs.writeFileSync(path.join(home, "LESSONS-LEARNED.jsonl"),
     JSON.stringify({ title: "a|b", description: "c" }) + "\n" +
     JSON.stringify({ title: "a", description: "b|c" }) + "\n");
-  execFileSync("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" });
+  execFileSync("node", [CLI, "sync"], { env: { ...process.env, MURPHYS_HOME: home }, encoding: "utf8" });
   const rows = fs.readFileSync(path.join(home, "lessons.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(rows.length, 2, "both pipe-shifted lessons land — neither is swallowed as the other's duplicate");
   assert.notEqual(rows[0].id, rows[1].id, "structural tuple hash gives distinct ids");
 });
 
 test("round 7.2: non-string content is never judged — coercion is a lossy transform", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r72-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r72-"));
   // Out-of-contract rows appended directly to the file, as a legacy migration
   // or manual edit could: no writer in this package produces these.
   const rows = [
@@ -344,7 +344,7 @@ test("round 7.2: non-string content is never judged — coercion is a lossy tran
   ];
   fs.writeFileSync(path.join(home, "lessons.jsonl"), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
   const result = JSON.parse(execFileSync("node", [CLI, "dedupe", "--apply"],
-    { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" }));
+    { env: { ...process.env, MURPHYS_HOME: home }, encoding: "utf8" }));
   assert.equal(result.retired, 0, "coerced collisions ({a:1}/{b:2} -> [object Object], 42 -> \"42\") must never retire");
   const surfaces = JSON.stringify(result);
   for (const r of rows) assert.ok(!surfaces.includes(r.id), `out-of-contract row ${r.id} must appear in neither tier`);
@@ -353,8 +353,8 @@ test("round 7.2: non-string content is never judged — coercion is a lossy tran
 });
 
 test("round 7.2: candidates reflect the post-plan register and carry usable member objects", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r72c-"));
-  const env = { ...process.env, MUPHYS_HOME: home };
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r72c-"));
+  const env = { ...process.env, MURPHYS_HOME: home };
   // A and A2 are byte-identical (one will retire); B is fold-equal only.
   execFileSync("node", [CLI, "add", "--title", "Restart rule —", "--description", "Drain before restart.", "--date", "2026-01-01"], { env, encoding: "utf8" });
   execFileSync("node", [CLI, "add", "--title", "Restart rule —", "--description", "Drain before restart.", "--date", "2026-02-01"], { env, encoding: "utf8" });
@@ -375,11 +375,11 @@ test("round 7.2: candidates reflect the post-plan register and carry usable memb
 });
 
 test("round 7.3: reader collapses duplicate-id lines (first wins) and dedupe never self-retires them", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r73-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r73-"));
   const rowX = JSON.stringify({ id: "llp-dupline00001", title: "Synced lesson", description: "Body of the synced lesson.", status: "active" });
   const rowY = JSON.stringify({ id: "llg-distinct0001", title: "Other lesson", description: "A different body entirely.", status: "active" });
   fs.writeFileSync(path.join(home, "lessons.jsonl"), rowX + "\n" + rowX + "\n" + rowY + "\n");
-  const env = { ...process.env, MUPHYS_HOME: home, HOME: home };
+  const env = { ...process.env, MURPHYS_HOME: home, HOME: home };
   const stats = JSON.parse(execFileSync("node", [CLI, "stats"], { env, encoding: "utf8" }));
   assert.equal(stats.register.total, 2, "the duplicated line is one lesson to every reader");
   const result = JSON.parse(execFileSync("node", [CLI, "dedupe", "--apply"], { env, encoding: "utf8" }));
@@ -390,11 +390,11 @@ test("round 7.3: reader collapses duplicate-id lines (first wins) and dedupe nev
 });
 
 test("round 7.3: divergent same-id lines are a doctor issue — the reader is masking data", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r73d-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r73d-"));
   const first = JSON.stringify({ id: "llg-divergent001", title: "First version", description: "The first body.", status: "active" });
   const second = JSON.stringify({ id: "llg-divergent001", title: "Second version", description: "A conflicting body.", status: "active" });
   fs.writeFileSync(path.join(home, "lessons.jsonl"), first + "\n" + second + "\n");
-  const env = { ...process.env, MUPHYS_HOME: home, HOME: home };
+  const env = { ...process.env, MURPHYS_HOME: home, HOME: home };
   const stats = JSON.parse(execFileSync("node", [CLI, "stats"], { env, encoding: "utf8" }));
   assert.equal(stats.register.total, 1, "first occurrence wins");
   let doctorOut = "";
@@ -411,15 +411,15 @@ test("round 7.3: divergent same-id lines are a doctor issue — the reader is ma
 });
 
 test("round 7.4: sync rows are pure functions of source content — two syncs, byte-identical registers", async () => {
-  const source = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74src-"));
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r74src-"));
   fs.writeFileSync(path.join(source, "LESSONS-LEARNED.jsonl"),
     JSON.stringify({ title: "Dated lesson", description: "Has a source date.", date: "2026-03-04" }) + "\n" +
     JSON.stringify({ title: "Undated lesson", description: "No date in the source row." }) + "\n");
   const registers = [];
   for (const label of ["a", "b"]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), `muphys-r74${label}-`));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), `murphys-r74${label}-`));
     fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({ projects: [{ slug: "det", root: source }] }));
-    execFileSync("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" });
+    execFileSync("node", [CLI, "sync"], { env: { ...process.env, MURPHYS_HOME: home }, encoding: "utf8" });
     registers.push(fs.readFileSync(path.join(home, "lessons.jsonl"), "utf8"));
   }
   assert.equal(registers[0], registers[1], "same source must produce byte-identical durable rows regardless of when sync runs");
@@ -432,7 +432,7 @@ test("round 7.4: sync rows are pure functions of source content — two syncs, b
 });
 
 test("round 7.4: a live foreign lock is respected AND survives the run — no blind unlock", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74lock-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r74lock-"));
   fs.writeFileSync(path.join(home, "projects.json"), JSON.stringify({ projects: [{ slug: "lk", root: home }] }));
   fs.writeFileSync(path.join(home, "LESSONS-LEARNED.jsonl"),
     JSON.stringify({ title: "Lock test lesson", description: "Body for the lock test." }) + "\n");
@@ -441,7 +441,7 @@ test("round 7.4: a live foreign lock is respected AND survives the run — no bl
   // held, skip, and leave the file untouched.
   const foreign = JSON.stringify({ pid: process.pid, ts: "2026-01-01T00:00:00Z" });
   fs.writeFileSync(lockPath, foreign);
-  const outRaw = execFileSync("node", [CLI, "sync"], { env: { ...process.env, MUPHYS_HOME: home }, encoding: "utf8" });
+  const outRaw = execFileSync("node", [CLI, "sync"], { env: { ...process.env, MURPHYS_HOME: home }, encoding: "utf8" });
   assert.equal(JSON.parse(outRaw).skipped, true, "a live holder is never displaced");
   assert.equal(fs.readFileSync(lockPath, "utf8"), foreign, "the foreign lock survives byte-for-byte — release only ever removes a lock naming the releaser's own pid");
 });
@@ -449,22 +449,22 @@ test("round 7.4: a live foreign lock is respected AND survives the run — no bl
 test("round 7.4: doctor's liveness alarm is scoped to THIS install's hook path", async () => {
   const hookPath = path.join(HERE, "..", "hooks", "lessons-recall-hook.mjs");
   // Foreign checkout mounted (same basename, different path): no alarm.
-  const homeForeign = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74docf-"));
+  const homeForeign = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r74docf-"));
   fs.mkdirSync(path.join(homeForeign, ".claude"), { recursive: true });
   fs.writeFileSync(path.join(homeForeign, ".claude", "settings.json"),
     JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "node /some/other/checkout/hooks/lessons-recall-hook.mjs" }] }] } }));
   const okOut = JSON.parse(execFileSync("node", [CLI, "doctor"],
-    { env: { ...process.env, MUPHYS_HOME: homeForeign, HOME: homeForeign }, encoding: "utf8" }));
+    { env: { ...process.env, MURPHYS_HOME: homeForeign, HOME: homeForeign }, encoding: "utf8" }));
   assert.equal(okOut.ok, true, "another install's hook logs to ITS home — alarming here is a false positive");
   // THIS install mounted, no injection log: alarm.
-  const homeMine = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-r74docm-"));
+  const homeMine = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-r74docm-"));
   fs.mkdirSync(path.join(homeMine, ".claude"), { recursive: true });
   fs.writeFileSync(path.join(homeMine, ".claude", "settings.json"),
     JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: `node ${hookPath}` }] }] } }));
   let code = 0;
   let raw = "";
   try {
-    raw = execFileSync("node", [CLI, "doctor"], { env: { ...process.env, MUPHYS_HOME: homeMine, HOME: homeMine }, encoding: "utf8" });
+    raw = execFileSync("node", [CLI, "doctor"], { env: { ...process.env, MURPHYS_HOME: homeMine, HOME: homeMine }, encoding: "utf8" });
   } catch (err) {
     code = err.status;
     raw = err.stdout;

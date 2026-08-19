@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// muphys-law — push-injection recall hook for Claude Code (UserPromptSubmit).
+// murphys-law — push-injection recall hook for Claude Code (UserPromptSubmit).
 //
 // Pull-based recall ("remember to call lessons_query before tasks") measurably
 // fails: in the originating deployment the primary agent called it once in
@@ -11,7 +11,7 @@
 // Install (user scope, ~/.claude/settings.json):
 //   "hooks": { "UserPromptSubmit": [ { "hooks": [ {
 //     "type": "command",
-//     "command": "node /path/to/muphys-law/hooks/lessons-recall-hook.mjs",
+//     "command": "node /path/to/murphys-law/hooks/lessons-recall-hook.mjs",
 //     "timeout": 10 } ] } ] }
 //
 // HARD-WON MOUNTING NOTE: if your agent harness spawns Claude Code with
@@ -24,7 +24,7 @@
 // output. Fail-open components are silent when broken, so pair this with an
 // external liveness check (see bin/muphys.mjs doctor).
 //
-// EXPERIMENT MODE (optional): if MUPHYS_HOME/experiment.json exists and is
+// EXPERIMENT MODE (optional): if MURPHYS_HOME/experiment.json exists and is
 // enabled, sessions are randomized treat/control by a deterministic hash of
 // session id; control sessions compute and LOG the counterfactual injection
 // without emitting it, so both arms produce matched records. This is how the
@@ -45,14 +45,14 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const core = require(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib", "register.cjs"));
 
-const MUPHYS_HOME = core.MUPHYS_HOME;
-const STATE_DIR = path.join(MUPHYS_HOME, "hook-state");
-const INJECTION_LOG = path.resolve(process.env.MUPHYS_INJECTION_LOG || path.join(MUPHYS_HOME, "injections.jsonl"));
-const EXPERIMENT_PATH = path.join(MUPHYS_HOME, "experiment.json");
+const MURPHYS_HOME = core.MURPHYS_HOME;
+const STATE_DIR = path.join(MURPHYS_HOME, "hook-state");
+const INJECTION_LOG = path.resolve(process.env.MURPHYS_INJECTION_LOG || path.join(MURPHYS_HOME, "injections.jsonl"));
+const EXPERIMENT_PATH = path.join(MURPHYS_HOME, "experiment.json");
 
 // Gate policy (hook-side; the scorer itself is shared with lessons_query).
-const MIN_SCORE = Number(process.env.MUPHYS_HOOK_MIN_SCORE || 12);
-const MIN_TERMS = Number(process.env.MUPHYS_HOOK_MIN_TERMS || 3);
+const MIN_SCORE = Number(process.env.MURPHYS_HOOK_MIN_SCORE || 12);
+const MIN_TERMS = Number(process.env.MURPHYS_HOOK_MIN_TERMS || 3);
 const MAX_LESSONS = 3;
 const MAX_BLOCK_CHARS = 1400;
 const MAX_INJECTIONS_PER_SESSION = 5;
@@ -63,18 +63,18 @@ const MIN_PROMPT_CHARS = 40; // "ok", "continue" never trigger recall
 // An INVALID pattern must not throw at module load (that would exit nonzero
 // and block the user's prompt — the one thing this hook must never do). It
 // resolves to match-nothing: a broken scoping filter scopes to nothing, and
-// `muphys doctor`'s liveness check surfaces the resulting silence.
+// `murphys doctor`'s liveness check surfaces the resulting silence.
 const CWD_FILTER = (() => {
-  if (!process.env.MUPHYS_HOOK_CWD_FILTER) return null;
+  if (!process.env.MURPHYS_HOOK_CWD_FILTER) return null;
   try {
-    return new RegExp(process.env.MUPHYS_HOOK_CWD_FILTER);
+    return new RegExp(process.env.MURPHYS_HOOK_CWD_FILTER);
   } catch {
     return { test: () => false };
   }
 })();
 
 function armForSession(sessionId, treatFraction) {
-  const digest = crypto.createHash("sha256").update(`muphys-recall|${sessionId}`).digest();
+  const digest = crypto.createHash("sha256").update(`murphys-recall|${sessionId}`).digest();
   return digest.readUInt32BE(0) / 0xffffffff < treatFraction ? "treat" : "control";
 }
 

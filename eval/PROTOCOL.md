@@ -1,7 +1,7 @@
 # Evaluating a lessons register honestly
 
 Most agent-memory projects ship retrieval and never measure whether it changes
-anything. This document is the evaluation protocol we ran against muphys-law
+anything. This document is the evaluation protocol we ran against murphys-law
 before releasing it, so you can (a) audit our claims and (b) rerun it against
 your own fleet. The headline results live in the README; this is the method.
 

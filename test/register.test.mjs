@@ -6,8 +6,8 @@ import os from "node:os";
 import { createRequire } from "node:module";
 
 // Point the core at a throwaway home BEFORE requiring it.
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-test-"));
-process.env.MUPHYS_HOME = HOME;
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-test-"));
+process.env.MURPHYS_HOME = HOME;
 
 const require = createRequire(import.meta.url);
 const core = require("../lib/register.cjs");

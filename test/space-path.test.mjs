@@ -11,8 +11,8 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SPACED = fs.mkdtempSync(path.join(os.tmpdir(), "muphys space test-"));
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "muphys-space-home-"));
+const SPACED = fs.mkdtempSync(path.join(os.tmpdir(), "murphys space test-"));
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "murphys-space-home-"));
 
 before(() => {
   for (const dir of ["lib", "hooks", "bin"]) {
@@ -37,7 +37,7 @@ test("hook loads and injects from a path containing spaces", () => {
       cwd: "/tmp",
       prompt: "I need to update the skills array in the config so the agent keeps the existing whitelist entries when adding the new skill",
     }),
-    env: { ...process.env, MUPHYS_HOME: HOME },
+    env: { ...process.env, MURPHYS_HOME: HOME },
     encoding: "utf8",
   });
   assert.match(out, /<lessons-recall>/);
@@ -46,7 +46,7 @@ test("hook loads and injects from a path containing spaces", () => {
 
 test("CLI loads and queries from a path containing spaces", () => {
   const out = execFileSync("node", [path.join(SPACED, "bin", "muphys.mjs"), "query", "skills", "whitelist"], {
-    env: { ...process.env, MUPHYS_HOME: HOME },
+    env: { ...process.env, MURPHYS_HOME: HOME },
     encoding: "utf8",
   });
   const result = JSON.parse(out);

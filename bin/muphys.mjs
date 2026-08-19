@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// muphys — CLI for the lessons register.
+// murphys — CLI for the lessons register.
 //
-//   muphys add --title "..." --description "..." [--tags a,b] [--evidence x]
+//   murphys add --title "..." --description "..." [--tags a,b] [--evidence x]
 //              [--project slug] [--author name] [--date YYYY-MM-DD]
-//   muphys query "<text>" [--tags a,b] [--limit N]
-//   muphys supersede --ids id1,id2 --superseded-by idX --reason "..."
-//   muphys deprecate --ids id1,id2 --reason "..."
-//   muphys dedupe [--apply]        byte-identical duplicates -> superseded; near-matches reported for review
-//   muphys sync [--dry-run]        pull project LESSONS-LEARNED.jsonl files in
-//   muphys doctor                  integrity + liveness checks
-//   muphys stats [--by-lesson]     register/funnel counts + outcome rollup
-//   muphys mcp                     run the stdio MCP server (npx-mountable)
+//   murphys query "<text>" [--tags a,b] [--limit N]
+//   murphys supersede --ids id1,id2 --superseded-by idX --reason "..."
+//   murphys deprecate --ids id1,id2 --reason "..."
+//   murphys dedupe [--apply]        byte-identical duplicates -> superseded; near-matches reported for review
+//   murphys sync [--dry-run]        pull project LESSONS-LEARNED.jsonl files in
+//   murphys doctor                  integrity + liveness checks
+//   murphys stats [--by-lesson]     register/funnel counts + outcome rollup
+//   murphys mcp                     run the stdio MCP server (npx-mountable)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -49,7 +49,7 @@ function out(value) {
 }
 
 function fail(message) {
-  console.error(`muphys: ${message}`);
+  console.error(`murphys: ${message}`);
   process.exit(2);
 }
 
@@ -228,7 +228,7 @@ switch (command) {
       break;
     }
     for (const plan of plans) {
-      await core.callTool("lessons_supersede", { ids: [plan.retire], supersededBy: plan.keeper, reason: "exact-duplicate-content (muphys dedupe)" });
+      await core.callTool("lessons_supersede", { ids: [plan.retire], supersededBy: plan.keeper, reason: "exact-duplicate-content (murphys dedupe)" });
     }
     out({ retired: plans.length, reviewCandidates: candidates });
     break;
@@ -326,7 +326,7 @@ switch (command) {
       // re-judge the CLAIMED content, and if it turns out live (yanked a
       // fresh lock inside the read-judge gap) restore it with a no-clobber
       // link and skip this run — failing toward safety.
-      const lockPath = path.join(core.MUPHYS_HOME, ".sync.lock");
+      const lockPath = path.join(core.MURPHYS_HOME, ".sync.lock");
       const tryLock = () => {
         try {
           fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }), { flag: "wx", mode: 0o600 });
@@ -402,7 +402,7 @@ switch (command) {
   }
 
   case "mcp": {
-    // Host the stdio MCP server through the CLI so `npx -y muphys-law mcp`
+    // Host the stdio MCP server through the CLI so `npx -y murphys-law mcp`
     // is a complete mount command — no clone, no path to the lib file.
     core.startMcpServer();
     // The server owns the process from here; it exits on stdin EOF.
@@ -462,7 +462,7 @@ switch (command) {
     for (const name of ["readRegister", "scoreLessonForQuery", "normalizeSearchText", "callTool"]) {
       if (typeof core[name] !== "function") issues.push(`runtime missing export ${name} — wrong or stale checkout?`);
     }
-    const injLog = path.resolve(process.env.MUPHYS_INJECTION_LOG || path.join(core.MUPHYS_HOME, "injections.jsonl"));
+    const injLog = path.resolve(process.env.MURPHYS_INJECTION_LOG || path.join(core.MURPHYS_HOME, "injections.jsonl"));
     if (!fs.existsSync(injLog)) {
       // Only alarm if the hook appears MOUNTED somewhere — a fresh install
       // with no hook yet is healthy, not broken.
@@ -492,10 +492,10 @@ switch (command) {
 
   case "stats": {
     const count = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).length : 0);
-    const injectionLog = path.resolve(process.env.MUPHYS_INJECTION_LOG || path.join(core.MUPHYS_HOME, "injections.jsonl"));
+    const injectionLog = path.resolve(process.env.MURPHYS_INJECTION_LOG || path.join(core.MURPHYS_HOME, "injections.jsonl"));
     const { totals, perLesson } = outcomeRollup();
     const result = {
-      home: core.MUPHYS_HOME,
+      home: core.MURPHYS_HOME,
       register: { total: core.readRegister().length, active: core.activeLessons().length },
       queries: count(core.QUERIES_JSONL),
       applications: count(core.USAGE_JSONL),
@@ -532,11 +532,11 @@ switch (command) {
   }
 
   default:
-    console.error(`muphys — lessons register CLI
+    console.error(`murphys — lessons register CLI
 
   add | query | supersede | deprecate | dedupe | sync | doctor | stats
 
-Data home: ${core.MUPHYS_HOME}  (override with MUPHYS_HOME)
+Data home: ${core.MURPHYS_HOME}  (override with MURPHYS_HOME)
 MCP server: node lib/register.cjs   (stdio)
 Recall hook: hooks/lessons-recall-hook.mjs  (Claude Code UserPromptSubmit)`);
     process.exit(command ? 2 : 0);

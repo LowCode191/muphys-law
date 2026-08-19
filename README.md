@@ -1,15 +1,25 @@
-# Muphys Law
+# Murphys Law
 
-![Muphys Law — whatever can go wrong, will — once](https://raw.githubusercontent.com/LowCode191/muphys-law/main/assets/banner.svg)
+![Murphys Law — whatever can go wrong, will — once](https://raw.githubusercontent.com/LowCode191/murphys-law/main/assets/banner.svg)
 
 **A lessons-learned register for AI agent fleets — with the receipts.**
 
-*Yes, "Muphys." The name is a misspelling of Murphy's law that stuck — fitting
-for a project about mistakes becoming institutional memory (see also
-[Muphry's law](https://en.wikipedia.org/wiki/Muphry%27s_law)). The adage
-itself: whatever can go wrong, will. This register's amendment: — once.*
+The name is the old adage. The toast is its most famous corollary: dropped
+toast lands butter-side down. Here's the part people forget — that was
+studied, and it isn't luck. From table height, a slipping slice gets exactly
+half a rotation: butter-side down is a **mechanism**, not a coin flip (the
+finding [won an Ig Nobel](https://en.wikipedia.org/wiki/Robert_Matthews_(scientist))).
+Same with agents: most failures that look like bad luck fire the same way
+every time, for a reason. This register catches the mechanism the first time
+it fires — so the toast lands butter-side up from then on.
 
-Agents repeat each other's mistakes. Muphys Law is the smallest system we
+*(This project shipped its first release under a misspelled name — "Muphys
+Law." For a tool about mistakes becoming institutional memory, that was
+almost too fitting; see [Muphry's law](https://en.wikipedia.org/wiki/Muphry%27s_law).
+We renamed it. The lesson is logged — see the register's own
+[sample lessons](data/sample-lessons.jsonl).)*
+
+Agents repeat each other's mistakes. Murphys Law is the smallest system we
 found that actually changes that: an append-only register of operational
 lessons ("what burned us, and what to do instead"), a curation path, a recall
 hook that **pushes** the relevant lesson into the agent's context at the
@@ -55,11 +65,11 @@ data licenses:
 ## Quickstart (5 minutes)
 
 ```bash
-git clone <this repo> && cd muphys-law
+git clone <this repo> && cd murphys-law
 npm test                                  # zero dependencies
 
 # seed a register with the sample lessons
-mkdir -p ~/.muphys && cp data/sample-lessons.jsonl ~/.muphys/lessons.jsonl
+mkdir -p ~/.murphys && cp data/sample-lessons.jsonl ~/.murphys/lessons.jsonl
 
 # query it
 node bin/muphys.mjs query "confirm the fix is live in production"
@@ -77,7 +87,7 @@ For Claude Code, add to **`~/.claude/settings.json`** (user scope):
   "hooks": {
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command",
-          "command": "node /path/to/muphys-law/hooks/lessons-recall-hook.mjs",
+          "command": "node /path/to/murphys-law/hooks/lessons-recall-hook.mjs",
           "timeout": 10 } ] }
     ]
   }
@@ -88,25 +98,25 @@ Every prompt is scored against the register; when a lesson clears the
 relevance gates it's injected as a clearly-framed background block (with date
 and status, markup-folded so register content can never act as instructions).
 Per-session dedupe, rate caps, and a no-ranking-slide rule keep it quiet;
-scope it with `MUPHYS_HOOK_CWD_FILTER` if you only want it in some trees.
+scope it with `MURPHYS_HOOK_CWD_FILTER` if you only want it in some trees.
 
 **Mounting matters — verify by effect.** Some agent harnesses spawn Claude
 Code with `--setting-sources user`, which silently ignores project-scope
 `.claude/settings.json`. Install at user scope, then prove the hook fires by
-watching `~/.muphys/injections.jsonl` from a *real* session. A settings file
+watching `~/.murphys/injections.jsonl` from a *real* session. A settings file
 that exists is not a hook that runs; ours sat inert for four days behind a
-guard that only read files back. `muphys doctor` checks this.
+guard that only read files back. `murphys doctor` checks this.
 
 ### The MCP server (pull-side tools for any MCP harness)
 
 ```bash
-npx -y muphys-law mcp     # stdio MCP server, no clone needed
+npx -y murphys-law mcp     # stdio MCP server, no clone needed
 ```
 
 Or from a clone: `node lib/register.cjs`. Typical client config:
 
 ```json
-{ "mcpServers": { "muphys": { "command": "npx", "args": ["-y", "muphys-law", "mcp"] } } }
+{ "mcpServers": { "murphys": { "command": "npx", "args": ["-y", "murphys-law", "mcp"] } } }
 ```
 
 Tools: `lessons_query`, `lessons_apply` (with an `outcome` field —
@@ -122,16 +132,16 @@ discipline alone fails — our primary agent called `lessons_query` once in
 it at any OpenAI-compatible embeddings endpoint (Ollama works):
 
 ```bash
-export MUPHYS_EMBEDDINGS_URL=http://localhost:11434/v1/embeddings
-export MUPHYS_EMBEDDINGS_MODEL=nomic-embed-text
-# optional: MUPHYS_EMBEDDINGS_API_KEY, MUPHYS_EMBEDDINGS_TIMEOUT_MS (default 4000)
+export MURPHYS_EMBEDDINGS_URL=http://localhost:11434/v1/embeddings
+export MURPHYS_EMBEDDINGS_MODEL=nomic-embed-text
+# optional: MURPHYS_EMBEDDINGS_API_KEY, MURPHYS_EMBEDDINGS_TIMEOUT_MS (default 4000)
 ```
 
 Unset = pure lexical, exactly as before. Design constraints, in order:
 **fail-open** (any backend error or timeout falls back to lexical ranks and
 records why in the query log — retrieval must never make the register
 unavailable); **cached** (vectors persist per-model in
-`~/.muphys/embeddings-cache.jsonl`, so the register embeds once, not per
+`~/.murphys/embeddings-cache.jsonl`, so the register embeds once, not per
 query); and **the hook stays lexical-only by design** — the prompt path never
 waits on a network call. Every query-log row now records which retriever
 answered (`retriever: lexical|hybrid`), so you can measure the difference on
@@ -174,7 +184,7 @@ Two honest notes from our production telemetry:
   push with the same exported logic the hook uses:
 
 ```js
-const { activeLessons, scoreLessonForQuery } = require("muphys-law/lib/register.cjs");
+const { activeLessons, scoreLessonForQuery } = require("murphys-law/lib/register.cjs");
 const hits = activeLessons()
   .map((l) => ({ l, s: scoreLessonForQuery(l, userPrompt, []) }))
   .filter((x) => x.s >= 12)
@@ -192,7 +202,7 @@ If your harness has its own pre-prompt hook point, a port of
 
 Any repo can keep a `LESSONS-LEARNED.jsonl` at its root (one
 `{title, description, ...}` per line — humans, agents, and CI can all append).
-Register roots in `~/.muphys/projects.json` (see
+Register roots in `~/.murphys/projects.json` (see
 [`data/projects.example.json`](data/projects.example.json)), then:
 
 ```bash
@@ -216,7 +226,7 @@ scoped `project:<slug>`. Never rename a slug (ids derive from it).
    each lesson's date and status, and angle-brackets are folded so a poisoned
    lesson can't escape the wrapper.
 5. **Fail-open + external liveness.** The hook must never block a prompt, so
-   its failure mode is silence — which is why `muphys doctor` exists and why
+   its failure mode is silence — which is why `murphys doctor` exists and why
    you verify installs by effect.
 6. **Truncation is explicit.** A silently cut description can lose exactly
    the actionable rule.

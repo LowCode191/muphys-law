@@ -1,21 +1,21 @@
 {
-  "name": "muphys-law",
-  "version": "0.2.0",
+  "name": "murphys-law",
+  "version": "0.3.0",
   "description": "A lessons-learned register for AI agent fleets: capture operational lessons, curate them, and push-inject the relevant ones into agent context — with the telemetry to prove whether it works.",
   "author": "LowCode191",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LowCode191/muphys-law.git"
+    "url": "git+https://github.com/LowCode191/murphys-law.git"
   },
-  "homepage": "https://github.com/LowCode191/muphys-law#readme",
+  "homepage": "https://github.com/LowCode191/murphys-law#readme",
   "bugs": {
-    "url": "https://github.com/LowCode191/muphys-law/issues"
+    "url": "https://github.com/LowCode191/murphys-law/issues"
   },
   "type": "module",
   "bin": {
-    "muphys": "bin/muphys.mjs",
-    "muphys-law": "bin/muphys.mjs"
+    "murphys": "bin/muphys.mjs",
+    "murphys-law": "bin/muphys.mjs"
   },
   "files": [
     "bin/",
